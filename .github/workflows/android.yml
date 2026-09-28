@@ -1,0 +1,73 @@
+name: Android APK
+
+# Builds the Android app and publishes it to the "android" GitHub release.
+# Secrets (optional but recommended — without them a debug-signed APK is built,
+# and phones can't update across builds signed with different keys):
+#   NOVA_KEYSTORE_B64       base64 of a keystore (keytool -genkeypair …)
+#   NOVA_KEYSTORE_PASSWORD  its password; NOVA_KEY_ALIAS (default "nova")
+# Variables: NOVA_SERVER_URL (default https://138-16-224-172.sslip.io),
+#            NOVA_SERVER_FALLBACK (default http://138.16.224.172)
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["client/**", "packages/**", ".github/workflows/android.yml"]
+
+permissions:
+  contents: write
+
+jobs:
+  apk:
+    runs-on: ubuntu-latest
+    env:
+      VITE_API_URL: ${{ vars.NOVA_SERVER_URL || 'https://138-16-224-172.sslip.io' }}
+      VITE_API_URL_FALLBACK: ${{ vars.NOVA_SERVER_FALLBACK || 'http://138.16.224.172' }}
+      NOVA_BUILD_NUMBER: ${{ github.run_number }}
+      ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: npm }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 21 }
+      - run: npm ci --no-audit --no-fund
+
+      - name: Signing key
+        id: key
+        env:
+          B64: ${{ secrets.NOVA_KEYSTORE_B64 }}
+        run: |
+          if [ -n "$B64" ]; then
+            echo "$B64" | base64 -d > "$RUNNER_TEMP/nova.keystore"
+            echo "NOVA_KEYSTORE=$RUNNER_TEMP/nova.keystore" >> "$GITHUB_ENV"
+            echo "mode=--release" >> "$GITHUB_OUTPUT"
+          else
+            echo "::warning::NOVA_KEYSTORE_B64 not set — building a debug-signed APK"
+            echo "mode=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build APK
+        working-directory: client
+        env:
+          NOVA_KEYSTORE_PASSWORD: ${{ secrets.NOVA_KEYSTORE_PASSWORD }}
+          NOVA_KEY_ALIAS: ${{ secrets.NOVA_KEY_ALIAS }}
+        run: node scripts/android-build.mjs ${{ steps.key.outputs.mode }}
+
+      - name: Stage
+        run: |
+          VERSION=$(node -p "require('./client/package.json').version")
+          cp client/release/ConcordNova-*.apk ConcordNova.apk
+          printf '{ "version": "%s", "build": %s, "url": "https://github.com/%s/releases/download/android/ConcordNova.apk" }\n' \
+            "$VERSION" "$NOVA_BUILD_NUMBER" "$GITHUB_REPOSITORY" > android-latest.json
+
+      - uses: actions/upload-artifact@v4
+        with: { name: ConcordNova-apk, path: ConcordNova.apk }
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: android
+          name: Concord Nova for Android
+          body: Install ConcordNova.apk on your phone (allow installing from this source when asked).
+          files: |
+            ConcordNova.apk
+            android-latest.json

@@ -1,0 +1,27 @@
+node_modules/
+dist/
+dist-electron/
+.env
+.env.local
+*.log
+npm-debug.log*
+.DS_Store
+coverage/
+.vite/
+*.tsbuildinfo
+
+# Runtime data: SQLite database (+ WAL/SHM sidecars), uploads, media cache
+data/
+server/prisma/*.db
+server/prisma/*.db-journal
+server/prisma/*.db-shm
+server/prisma/*.db-wal
+server/.test-data/
+
+# Local LiveKit binary downloaded by scripts/livekit-dev.mjs
+.livekit/
+
+# Electron / Android build output
+client/release/
+client/android/
+.playwright-mcp/

@@ -1,0 +1,44 @@
+appId: dev.concord.nova
+productName: Concord Nova
+copyright: Concord Nova
+electronVersion: 38.8.6
+directories:
+  output: release
+  buildResources: build
+# Renderer is bundled by Vite (dist/), main/preload by esbuild (dist-electron/),
+# so nothing from node_modules has to be packaged.
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - package.json
+asar: true
+npmRebuild: false
+buildDependenciesFromSource: false
+protocols:
+  - name: Concord Nova
+    schemes: [concord-nova]
+# Auto-update feed: GitHub Releases of your repository (set owner/repo).
+publish:
+  provider: github
+  owner: ZubaraX
+  repo: concord-nova
+  releaseType: release
+win:
+  icon: build/icon.ico
+  target:
+    - nsis
+  artifactName: ConcordNova-Setup-${version}.${ext}
+nsis:
+  oneClick: true
+  perMachine: false
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  runAfterFinish: true
+  shortcutName: Concord Nova
+  deleteAppDataOnUninstall: false
+mac:
+  target: [dmg]
+  category: public.app-category.social-networking
+linux:
+  target: [AppImage]
+  category: Network

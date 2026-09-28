@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Status-bar icon: the Nova star as a white silhouette (Android tints it). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="100"
+    android:viewportHeight="100">
+  <path
+      android:fillColor="#FFFFFFFF"
+      android:pathData="M50,4 C53.5,36 64,46.5 96,50 C64,53.5 53.5,64 50,96 C46.5,64 36,53.5 4,50 C36,46.5 46.5,36 50,4Z" />
+</vector>

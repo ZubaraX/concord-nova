@@ -1,0 +1,39 @@
+name: Deploy server
+
+# Push to main (server/client/shared changes) → the VPS is updated through
+# deploy/push.mjs → deploy/setup.sh (atomic swap, automatic rollback).
+# Secrets: DEPLOY_HOST (ip), DEPLOY_SSH_KEY (private key allowed for root).
+# Without them the job is skipped (deploy from your PC: `npm run deploy -- root@<ip>`).
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["server/**", "client/src/**", "packages/**", "deploy/**", "package-lock.json"]
+
+concurrency: deploy
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+    steps:
+      - name: Check configuration
+        if: env.DEPLOY_HOST == ''
+        run: echo "::notice::DEPLOY_HOST / DEPLOY_SSH_KEY secrets are not set — skipping deploy"
+      - uses: actions/checkout@v4
+        if: env.DEPLOY_HOST != ''
+      - uses: actions/setup-node@v4
+        if: env.DEPLOY_HOST != ''
+        with: { node-version: 24 }
+      - name: SSH key
+        if: env.DEPLOY_HOST != ''
+        env:
+          KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        run: |
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$KEY" > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+      - name: Deploy
+        if: env.DEPLOY_HOST != ''
+        run: node deploy/push.mjs "root@$DEPLOY_HOST"

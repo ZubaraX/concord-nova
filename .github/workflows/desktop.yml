@@ -1,0 +1,37 @@
+name: Desktop (Windows)
+
+# Tag v1.2.3 → builds the installer and publishes a GitHub release that the
+# installed apps auto-update from (electron-updater reads latest.yml there).
+# Manual runs just produce the installer as a workflow artifact.
+# Keep `publish.owner/repo` in client/electron-builder.yml pointing at this repo.
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      VITE_API_URL: ${{ vars.NOVA_SERVER_URL || 'https://138-16-224-172.sslip.io' }}
+      VITE_API_URL_FALLBACK: ${{ vars.NOVA_SERVER_FALLBACK || 'http://138.16.224.172' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24, cache: npm }
+      - run: npm ci --no-audit --no-fund
+      - name: Build
+        working-directory: client
+        run: npx vite build && node electron/build.mjs
+      - name: Package
+        working-directory: client
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --win --publish ${{ startsWith(github.ref, 'refs/tags/') && 'always' || 'never' }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ConcordNova-Setup
+          path: client/release/*.exe

@@ -1,0 +1,37 @@
+{
+  "name": "concord-nova",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Concord Nova — self-hosted Discord alternative: chat, voice, video, screen share. Desktop, Android, web.",
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "server",
+    "client"
+  ],
+  "scripts": {
+    "dev": "concurrently -k -n livekit,server,client -c yellow,blue,magenta \"npm:dev:livekit\" \"npm:dev:server\" \"npm:dev:client\"",
+    "dev:server": "npm run dev -w @nova/server",
+    "dev:client": "npm run dev -w @nova/client",
+    "dev:livekit": "node scripts/livekit-dev.mjs",
+    "build": "npm run build -w @nova/server && npm run build -w @nova/client",
+    "typecheck": "npm run typecheck -w @nova/shared && npm run typecheck -w @nova/server && npm run typecheck -w @nova/client",
+    "test": "npm run test -w @nova/shared && npm run test -w @nova/server && npm run test -w @nova/client",
+    "db:migrate": "npm run db:migrate -w @nova/server",
+    "db:deploy": "npm run db:deploy -w @nova/server",
+    "db:generate": "npm run db:generate -w @nova/server",
+    "desktop:dev": "npm run desktop:dev -w @nova/client",
+    "desktop:build": "npm run desktop:build -w @nova/client",
+    "android": "npm run android:build -w @nova/client",
+    "android:release": "npm run android:release -w @nova/client",
+    "icons": "node scripts/make-icons.mjs",
+    "migrate:concord": "npm run migrate:concord -w @nova/server --",
+    "deploy": "node deploy/push.mjs"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

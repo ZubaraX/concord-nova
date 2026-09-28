@@ -1,0 +1,393 @@
+// End-to-end API + gateway tests against a real server on a random port.
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { AddressInfo } from "node:net";
+import type { FastifyInstance } from "fastify";
+import sharp from "sharp";
+import { io as connectIo, type Socket } from "socket.io-client";
+import { Permission, UserFlags, type DispatchEvent, type GuildCreatePayload, type MessageDTO, type ReadyPayload } from "@nova/shared";
+
+let app: FastifyInstance;
+let base = "";
+let closeIo: () => void = () => {};
+
+beforeAll(async () => {
+  const { tuneSqlite } = await import("../src/db");
+  await tuneSqlite();
+  const { cache } = await import("../src/state/cache");
+  await cache.loadAll();
+  const { buildApp } = await import("../src/app");
+  app = await buildApp({ logger: false });
+  await app.listen({ port: 0, host: "127.0.0.1" });
+  const { attachGateway } = await import("../src/gateway");
+  const io = attachGateway(app.server, app.log);
+  closeIo = () => io.close();
+  base = `http://127.0.0.1:${(app.server.address() as AddressInfo).port}`;
+});
+
+afterAll(async () => {
+  for (const s of sockets) s.disconnect();
+  closeIo();
+  await app?.close();
+});
+
+// ── helpers ──────────────────────────────────────────────────────────────────
+async function api<T = any>(method: string, path: string, token?: string | null, body?: unknown): Promise<{ status: number; body: T }> {
+  const res = await fetch(base + path, {
+    method,
+    headers: { ...(body !== undefined ? { "content-type": "application/json" } : {}), ...(token ? { authorization: `Bearer ${token}` } : {}) },
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+  });
+  const text = await res.text();
+  let parsed: unknown = text;
+  try {
+    parsed = text ? JSON.parse(text) : null;
+  } catch {
+    /* not json */
+  }
+  return { status: res.status, body: parsed as T };
+}
+
+interface Acc {
+  id: string;
+  token: string;
+  refresh: string;
+  username: string;
+}
+
+async function register(username: string): Promise<Acc> {
+  const r = await api("POST", "/api/auth/register", null, { username, email: `${username}@example.com`, password: "correct-horse-battery" });
+  expect(r.status, JSON.stringify(r.body)).toBe(201);
+  return { id: r.body.user.id, token: r.body.accessToken, refresh: r.body.refreshToken, username };
+}
+
+const sockets: Socket[] = [];
+interface Live {
+  socket: Socket;
+  events: DispatchEvent[];
+  ready: ReadyPayload;
+  waitFor: <T extends DispatchEvent["t"]>(t: T, pred?: (d: Extract<DispatchEvent, { t: T }>["d"]) => boolean, ms?: number) => Promise<Extract<DispatchEvent, { t: T }>["d"]>;
+}
+
+async function live(acc: Acc): Promise<Live> {
+  const socket = connectIo(base, { auth: { token: acc.token, platform: "web" }, transports: ["websocket"], forceNew: true });
+  sockets.push(socket);
+  const events: DispatchEvent[] = [];
+  const waiters: { t: string; pred?: (d: any) => boolean; resolve: (d: any) => void }[] = [];
+  socket.on("dispatch", (e: DispatchEvent) => {
+    events.push(e);
+    for (const w of [...waiters]) {
+      if (w.t === e.t && (!w.pred || w.pred(e.d))) {
+        waiters.splice(waiters.indexOf(w), 1);
+        w.resolve(e.d);
+      }
+    }
+  });
+  const waitFor: Live["waitFor"] = (t, pred, ms = 5000) =>
+    new Promise((resolve, reject) => {
+      const hit = events.find((e) => e.t === t && (!pred || pred(e.d as never)));
+      if (hit) return resolve(hit.d as never);
+      const w = { t, pred: pred as (d: any) => boolean, resolve };
+      waiters.push(w);
+      setTimeout(() => {
+        const i = waiters.indexOf(w);
+        if (i >= 0) {
+          waiters.splice(i, 1);
+          reject(new Error(`timeout waiting for ${t}`));
+        }
+      }, ms);
+    });
+  const ready = (await waitFor("READY")) as ReadyPayload;
+  return { socket, events, ready, waitFor };
+}
+
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+
+// ── tests ────────────────────────────────────────────────────────────────────
+let alice: Acc;
+let bob: Acc;
+let guild: GuildCreatePayload;
+let general: string;
+
+describe("auth", () => {
+  it("first user becomes instance admin; login by username or email", async () => {
+    alice = await register("alice");
+    const me = await api("GET", "/api/users/@me", alice.token);
+    expect(me.body.flags & UserFlags.INSTANCE_ADMIN).toBeTruthy();
+    bob = await register("bob");
+    const bobMe = await api("GET", "/api/users/@me", bob.token);
+    expect(bobMe.body.flags & UserFlags.INSTANCE_ADMIN).toBeFalsy();
+
+    expect((await api("POST", "/api/auth/login", null, { login: "ALICE", password: "correct-horse-battery" })).status).toBe(200);
+    expect((await api("POST", "/api/auth/login", null, { login: "alice@example.com", password: "correct-horse-battery" })).status).toBe(200);
+    const bad = await api("POST", "/api/auth/login", null, { login: "alice", password: "nope-nope-nope" });
+    expect(bad.status).toBe(401);
+    expect(bad.body.error.code).toBe("invalid_credentials");
+  });
+
+  it("rejects duplicate usernames and bad input with field errors", async () => {
+    const dup = await api("POST", "/api/auth/register", null, { username: "alice", email: "x@example.com", password: "correct-horse-battery" });
+    expect(dup.status).toBe(409);
+    const bad = await api("POST", "/api/auth/register", null, { username: "A B", email: "nope", password: "1" });
+    expect(bad.status).toBe(400);
+    expect(Object.keys(bad.body.error.fields)).toEqual(expect.arrayContaining(["username", "email", "password"]));
+  });
+
+  it("refresh issues a new access token", async () => {
+    const r = await api("POST", "/api/auth/refresh", null, { refreshToken: alice.refresh });
+    expect(r.status).toBe(200);
+    expect((await api("GET", "/api/users/@me", r.body.accessToken)).status).toBe(200);
+  });
+
+  it("revoked sessions stop working immediately", async () => {
+    const extra = await api("POST", "/api/auth/login", null, { login: "bob", password: "correct-horse-battery" });
+    const token = extra.body.accessToken;
+    expect((await api("GET", "/api/users/@me", token)).status).toBe(200);
+    const sessions = await api("GET", "/api/users/@me/sessions", bob.token);
+    const other = sessions.body.find((s: { current: boolean }) => !s.current && s.id);
+    expect(other).toBeTruthy();
+    expect((await api("DELETE", `/api/users/@me/sessions/${other.id}`, bob.token)).status).toBe(204);
+    expect((await api("GET", "/api/users/@me", token)).status).toBe(401);
+    expect((await api("GET", "/api/users/@me", bob.token)).status).toBe(200);
+  });
+});
+
+describe("guilds, invites, messages", () => {
+  let aLive: Live;
+  let bLive: Live;
+
+  it("creates a guild from a template and delivers it over the gateway", async () => {
+    aLive = await live(alice);
+    const r = await api("POST", "/api/guilds", alice.token, { name: "Тестовый сервер", template: "default", locale: "ru" });
+    expect(r.status).toBe(201);
+    guild = r.body;
+    const text = guild.channels.find((c) => c.type === "text")!;
+    expect(text.name).toBe("общий");
+    expect(guild.channels.some((c) => c.type === "voice")).toBe(true);
+    general = text.id;
+    await aLive.waitFor("GUILD_CREATE", (g) => g.id === guild.id);
+  });
+
+  it("guild ids can't be joined without an invite", async () => {
+    // No open-join route exists; channel access is denied to non-members.
+    expect((await api("GET", `/api/channels/${general}/messages`, bob.token)).status).toBe(404);
+    expect((await api("GET", `/api/guilds/${guild.id}`, bob.token)).status).toBe(404);
+  });
+
+  it("invite: public preview, then join", async () => {
+    bLive = await live(bob);
+    const inv = await api("POST", `/api/guilds/${guild.id}/invites`, alice.token, { maxAge: 3600, maxUses: 0 });
+    expect(inv.status).toBe(201);
+    const preview = await api("GET", `/api/invites/${inv.body.code}`);
+    expect(preview.body.guild.name).toBe("Тестовый сервер");
+    expect(preview.body.guild.memberCount).toBe(1);
+    const join = await api("POST", `/api/invites/${inv.body.code}`, bob.token);
+    expect(join.status).toBe(200);
+    await bLive.waitFor("GUILD_CREATE", (g) => g.id === guild.id);
+    await aLive.waitFor("GUILD_MEMBER_ADD", (m) => m.userId === bob.id);
+    // System "joined" message lands in the system channel.
+    await aLive.waitFor("MESSAGE_CREATE", (m) => m.channelId === general && m.type === 7 && m.author.id === bob.id);
+  });
+
+  it("messages are idempotent by nonce and fan out live", async () => {
+    const body = { content: "Привет, **мир**!", nonce: "n-1" };
+    const first = await api<MessageDTO>("POST", `/api/channels/${general}/messages`, bob.token, body);
+    expect(first.status).toBe(201);
+    const again = await api<MessageDTO>("POST", `/api/channels/${general}/messages`, bob.token, body);
+    expect(again.body.id).toBe(first.body.id);
+    const got = await aLive.waitFor("MESSAGE_CREATE", (m) => m.id === first.body.id);
+    expect(got.nonce).toBe("n-1");
+    const hist = await api<MessageDTO[]>("GET", `/api/channels/${general}/messages?limit=50`, alice.token);
+    expect(hist.body.filter((m) => m.nonce === "n-1")).toHaveLength(1);
+  });
+
+  it("mentions bump the mention counter; ack clears it on every device", async () => {
+    const m = await api<MessageDTO>("POST", `/api/channels/${general}/messages`, alice.token, { content: `эй <@${bob.id}>` });
+    expect(m.body.mentions).toEqual([bob.id]);
+    const { prisma } = await import("../src/db");
+    const rs = await prisma.readState.findUnique({ where: { userId_channelId: { userId: bob.id, channelId: general } } });
+    expect(rs?.mentionCount).toBe(1);
+    await api("POST", `/api/channels/${general}/ack`, bob.token, { messageId: m.body.id });
+    await bLive.waitFor("MESSAGE_ACK", (a) => a.channelId === general && a.mentionCount === 0);
+  });
+
+  it("members can't delete others' messages; the owner can", async () => {
+    const own = await api<MessageDTO>("POST", `/api/channels/${general}/messages`, alice.token, { content: "owner msg" });
+    expect((await api("DELETE", `/api/channels/${general}/messages/${own.body.id}`, bob.token)).status).toBe(403);
+    const bobs = await api<MessageDTO>("POST", `/api/channels/${general}/messages`, bob.token, { content: "bob msg" });
+    expect((await api("DELETE", `/api/channels/${general}/messages/${bobs.body.id}`, alice.token)).status).toBe(204);
+    await bLive.waitFor("MESSAGE_DELETE", (d) => d.id === bobs.body.id);
+  });
+
+  it("edits, reactions and pins", async () => {
+    const msg = await api<MessageDTO>("POST", `/api/channels/${general}/messages`, bob.token, { content: "typo" });
+    const ed = await api<MessageDTO>("PATCH", `/api/channels/${general}/messages/${msg.body.id}`, bob.token, { content: "fixed" });
+    expect(ed.body.content).toBe("fixed");
+    expect(ed.body.editedAt).toBeTruthy();
+    expect((await api("PATCH", `/api/channels/${general}/messages/${msg.body.id}`, alice.token, { content: "hijack" })).status).toBe(403);
+
+    const emoji = encodeURIComponent("🔥");
+    expect((await api("PUT", `/api/channels/${general}/messages/${msg.body.id}/reactions/${emoji}/@me`, alice.token)).status).toBe(204);
+    await bLive.waitFor("MESSAGE_REACTION_ADD", (r) => r.messageId === msg.body.id && r.emoji === "🔥");
+    expect((await api("PUT", `/api/channels/${general}/messages/${msg.body.id}/reactions/${encodeURIComponent("notanemoji")}/@me`, alice.token)).status).toBe(400);
+
+    // Pinning needs MANAGE_MESSAGES in guilds.
+    expect((await api("PUT", `/api/channels/${general}/pins/${msg.body.id}`, bob.token)).status).toBe(403);
+    expect((await api("PUT", `/api/channels/${general}/pins/${msg.body.id}`, alice.token)).status).toBe(204);
+    const pins = await api<MessageDTO[]>("GET", `/api/channels/${general}/pins`, bob.token);
+    expect(pins.body.map((p) => p.id)).toContain(msg.body.id);
+  });
+
+  it("private channels are invisible and unreachable to non-allowed members", async () => {
+    const deny = Permission.VIEW_CHANNEL.toString();
+    const r = await api("POST", `/api/guilds/${guild.id}/channels`, alice.token, {
+      name: "Секретный",
+      type: "text",
+      overwrites: [{ id: guild.id, type: "role", allow: "0", deny }],
+    });
+    expect(r.status).toBe(201);
+    const secret = r.body.id as string;
+    expect(r.body.name).toBe("секретный");
+    await aLive.waitFor("CHANNEL_CREATE", (c) => c.id === secret);
+    await sleep(200);
+    expect(bLive.events.some((e) => e.t === "CHANNEL_CREATE" && e.d.id === secret)).toBe(false);
+    expect((await api("GET", `/api/channels/${secret}/messages`, bob.token)).status).toBe(404);
+    expect((await api("POST", `/api/channels/${secret}/messages`, bob.token, { content: "sneak" })).status).toBe(404);
+
+    // Granting bob access by member overwrite makes it appear for him live.
+    await api("PATCH", `/api/channels/${secret}`, alice.token, {
+      overwrites: [
+        { id: guild.id, type: "role", allow: "0", deny },
+        { id: bob.id, type: "member", allow: deny, deny: "0" },
+      ],
+    });
+    await bLive.waitFor("CHANNEL_CREATE", (c) => c.id === secret);
+    expect((await api("GET", `/api/channels/${secret}/messages`, bob.token)).status).toBe(200);
+  });
+
+  it("members can't escalate: no roles, no channel management", async () => {
+    expect((await api("POST", `/api/guilds/${guild.id}/roles`, bob.token, { name: "admin", permissions: Permission.ADMINISTRATOR.toString() })).status).toBe(403);
+    expect((await api("POST", `/api/guilds/${guild.id}/channels`, bob.token, { name: "x" })).status).toBe(403);
+    expect((await api("DELETE", `/api/guilds/${guild.id}/members/${alice.id}`, bob.token)).status).toBe(403);
+  });
+
+  it("search is case-insensitive for Cyrillic and respects visibility", async () => {
+    await api("POST", `/api/channels/${general}/messages`, alice.token, { content: "Ёлка стоит в ЗАЛЕ" });
+    await sleep(50);
+    const r = await api("GET", `/api/guilds/${guild.id}/messages/search?content=${encodeURIComponent("елка зале")}`, bob.token);
+    expect(r.status).toBe(200);
+    expect(r.body.messages.map((m: MessageDTO) => m.content)).toContain("Ёлка стоит в ЗАЛЕ");
+  });
+
+  it("uploads: images get dimensions + resized variants; html downloads instead of rendering", async () => {
+    const png = await sharp({ create: { width: 800, height: 600, channels: 3, background: { r: 200, g: 50, b: 90 } } }).png().toBuffer();
+    const form = new FormData();
+    form.append("file", new Blob([new Uint8Array(png)], { type: "image/png" }), "фото.png");
+    const up = await fetch(base + "/api/attachments", { method: "POST", headers: { authorization: `Bearer ${bob.token}` }, body: form });
+    expect(up.status).toBe(201);
+    const att = await up.json();
+    expect(att.width).toBe(800);
+    expect(att.contentType).toBe("image/png");
+
+    const msg = await api<MessageDTO>("POST", `/api/channels/${general}/messages`, bob.token, { content: "", attachments: [att.id] });
+    expect(msg.status).toBe(201);
+    expect(msg.body.attachments[0].id).toBe(att.id);
+    // Can't reuse a claimed attachment.
+    expect((await api("POST", `/api/channels/${general}/messages`, bob.token, { content: "again", attachments: [att.id] })).status).toBe(400);
+
+    const file = await fetch(base + att.url);
+    expect(file.headers.get("content-type")).toBe("image/png");
+    const small = await fetch(base + att.url + "?w=100");
+    expect(small.headers.get("content-type")).toBe("image/webp");
+    const range = await fetch(base + att.url, { headers: { range: "bytes=0-9" } });
+    expect(range.status).toBe(206);
+    expect((await range.arrayBuffer()).byteLength).toBe(10);
+
+    const html = new FormData();
+    html.append("file", new Blob(["<script>alert(1)</script>"], { type: "text/html" }), "evil.html");
+    const up2 = await (await fetch(base + "/api/attachments", { method: "POST", headers: { authorization: `Bearer ${bob.token}` }, body: html })).json();
+    const served = await fetch(base + up2.url);
+    expect(served.headers.get("content-type")).toBe("application/octet-stream");
+    expect(served.headers.get("content-disposition")).toMatch(/^attachment/);
+  });
+
+  it("voice tokens only for voice channels the user can connect to", async () => {
+    const voiceCh = guild.channels.find((c) => c.type === "voice")!;
+    const ok = await api("POST", "/api/voice/join", bob.token, { channelId: voiceCh.id });
+    expect(ok.status).toBe(200);
+    expect(typeof ok.body.token).toBe("string");
+    expect(ok.body.rights.mic).toBe(true);
+    expect((await api("POST", "/api/voice/join", bob.token, { channelId: general })).status).toBe(400);
+  });
+});
+
+describe("friends and DMs", () => {
+  it("friend request → accept → DM with live delivery", async () => {
+    const carol = await register("carol");
+    const cLive = await live(carol);
+    const aLive2 = await live(alice);
+    expect((await api("POST", "/api/users/@me/relationships", carol.token, { username: "alice" })).status).toBe(200);
+    await aLive2.waitFor("RELATIONSHIP_ADD", (r) => r.userId === carol.id && r.type === 3);
+    expect((await api("PUT", `/api/users/@me/relationships/${carol.id}`, alice.token, {})).status).toBe(200);
+    await cLive.waitFor("RELATIONSHIP_ADD", (r) => r.userId === alice.id && r.type === 1);
+
+    const dm = await api("POST", "/api/users/@me/channels", carol.token, { recipientId: alice.id });
+    expect(dm.status).toBe(200);
+    const sent = await api<MessageDTO>("POST", `/api/channels/${dm.body.id}/messages`, carol.token, { content: "привет!" });
+    // The DM was closed for alice — it reopens with the message.
+    await aLive2.waitFor("CHANNEL_CREATE", (c) => c.id === dm.body.id);
+    await aLive2.waitFor("MESSAGE_CREATE", (m) => m.id === sent.body.id);
+
+    // Blocking stops DMs both ways.
+    expect((await api("PUT", `/api/users/@me/relationships/${carol.id}`, alice.token, { type: 2 })).status).toBe(200);
+    expect((await api("POST", `/api/channels/${dm.body.id}/messages`, carol.token, { content: "hello?" })).status).toBe(403);
+  });
+
+  it("strangers without a shared guild can't open a DM", async () => {
+    const dave = await register("dave");
+    const erin = await register("erin");
+    expect((await api("POST", "/api/users/@me/channels", dave.token, { recipientId: erin.id })).status).toBe(403);
+  });
+});
+
+describe("android push", () => {
+  it("SSE stream carries DM pushes; the push token only works for push", async () => {
+    const fred = await register("fred");
+    expect((await api("POST", "/api/users/@me/relationships", fred.token, { username: "alice" })).status).toBe(200);
+    expect((await api("PUT", `/api/users/@me/relationships/${fred.id}`, alice.token, {})).status).toBe(200);
+    const push = (await api<{ token: string }>("POST", "/api/push/token", fred.token)).body.token;
+    expect((await api("GET", "/api/auth/me", push)).status).toBe(401);
+
+    const ctrl = new AbortController();
+    const res = await fetch(`${base}/api/push/stream?token=${encodeURIComponent(push)}`, { signal: ctrl.signal });
+    expect(res.status).toBe(200);
+    const reader = res.body!.getReader();
+    const dm = await api("POST", "/api/users/@me/channels", alice.token, { recipientId: fred.id });
+    await api("POST", `/api/channels/${dm.body.id}/messages`, alice.token, { content: "ping from alice" });
+
+    let buf = "";
+    const timeout = new Promise<never>((_, rej) => setTimeout(() => rej(new Error("no push within 5s")), 5000));
+    while (!buf.includes("ping from alice")) {
+      const { value, done } = await Promise.race([reader.read(), timeout]);
+      if (done) break;
+      buf += new TextDecoder().decode(value);
+    }
+    ctrl.abort();
+    const line = buf.split(/\r?\n/).find((l) => l.startsWith("data:"))!;
+    expect(JSON.parse(line.slice(5))).toMatchObject({ type: "dm", authorId: alice.id, channelId: dm.body.id, body: "ping from alice" });
+
+    expect((await api("POST", "/api/push/decline", null, { token: push, channelId: dm.body.id })).status).toBe(204);
+    expect((await api("POST", "/api/push/decline", null, { token: "not-a-real-token", channelId: dm.body.id })).status).toBe(401);
+  });
+});
+
+describe("ssrf guard", () => {
+  it("blocks internal addresses", async () => {
+    const { isPrivateIp, safeFetch } = await import("../src/lib/ssrf");
+    for (const ip of ["127.0.0.1", "10.1.2.3", "192.168.1.1", "172.20.0.1", "169.254.169.254", "::1", "fd00::1", "fe80::1", "::ffff:127.0.0.1", "100.64.0.1"]) {
+      expect(isPrivateIp(ip), ip).toBe(true);
+    }
+    for (const ip of ["8.8.8.8", "1.1.1.1", "2606:4700:4700::1111"]) expect(isPrivateIp(ip), ip).toBe(false);
+    await expect(safeFetch(base + "/health")).rejects.toThrow();
+    await expect(safeFetch("http://localhost:1/")).rejects.toThrow();
+  });
+});

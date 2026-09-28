@@ -1,0 +1,73 @@
+// Invites (public preview + accept) and the Android push stream.
+import type { FastifyInstance } from "fastify";
+import { z } from "zod";
+import { authenticate, signPushToken, verifyPushToken } from "../lib/auth";
+import { parse, unauthorized } from "../lib/errors";
+import { acceptInvite, deleteInvite, getInvite } from "../services/invites";
+import { addPushStream } from "../services/push";
+import { voice } from "../state/voice";
+
+const codeParam = z.object({ code: z.string().regex(/^[A-Za-z0-9-]{2,32}$/) });
+
+export async function inviteRoutes(app: FastifyInstance) {
+  app.get("/:code", async (req) => getInvite(parse(codeParam, req.params).code));
+  app.post("/:code", { preHandler: authenticate }, async (req) => acceptInvite(req.auth.userId, parse(codeParam, req.params).code));
+  app.delete("/:code", { preHandler: authenticate }, async (req, reply) => {
+    await deleteInvite(req.auth.userId, parse(codeParam, req.params).code);
+    return reply.code(204).send();
+  });
+}
+
+export async function pushRoutes(app: FastifyInstance) {
+  // The Android service can't refresh short-lived access tokens in the
+  // background; it gets a long-lived token that is ONLY valid for this stream
+  // and dies with the session.
+  app.post("/token", { preHandler: authenticate }, async (req) => ({ token: await signPushToken(req.auth.userId, req.auth.sid) }));
+
+  // "Decline" from the Android call notification — the WebView may be asleep,
+  // so the service authenticates with its push token.
+  app.post("/decline", { config: { rateLimit: { max: 30, timeWindow: 60_000 } } }, async (req, reply) => {
+    const { token, channelId } = parse(z.object({ token: z.string().min(10).max(2000), channelId: z.string().max(40) }), req.body);
+    let ctx;
+    try {
+      ctx = await verifyPushToken(token);
+    } catch {
+      throw unauthorized("invalid_token");
+    }
+    voice.decline(ctx.userId, channelId);
+    return reply.code(204).send();
+  });
+
+  app.get("/stream", async (req, reply) => {
+    const { token } = parse(z.object({ token: z.string().min(10).max(2000) }), req.query);
+    let ctx;
+    try {
+      ctx = await verifyPushToken(token);
+    } catch {
+      throw unauthorized("invalid_token");
+    }
+    reply.hijack();
+    const res = reply.raw;
+    res.writeHead(200, {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache, no-transform",
+      connection: "keep-alive",
+      "x-accel-buffering": "no",
+    });
+    res.write(": connected\n\n");
+    const remove = addPushStream(ctx.userId, ctx.sid, res);
+    const hb = setInterval(() => {
+      try {
+        res.write(": ping\n\n");
+      } catch {
+        /* closed */
+      }
+    }, 25_000);
+    const done = () => {
+      clearInterval(hb);
+      remove();
+    };
+    req.raw.on("close", done);
+    res.on("close", done);
+  });
+}

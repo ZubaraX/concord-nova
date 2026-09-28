@@ -1,0 +1,6 @@
+# Shell scripts run on Linux servers: always LF, whatever the checkout OS.
+*.sh text eol=lf
+client/android-extras/** text eol=lf
+*.png binary
+*.ico binary
+*.db binary
