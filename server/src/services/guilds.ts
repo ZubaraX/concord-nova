@@ -176,6 +176,13 @@ export async function transferOwnership(actorId: string, guildId: string, newOwn
   const g = cache.guild(guildId);
   if (!g) throw notFound("unknown_guild");
   if (g.ownerId !== actorId) throw forbidden("owner_only");
+  await setGuildOwner(guildId, newOwnerId);
+}
+
+/** Hand a server to one of its members (owner transfer, or an instance admin's override). */
+export async function setGuildOwner(guildId: string, newOwnerId: string) {
+  const g = cache.guild(guildId);
+  if (!g) throw notFound("unknown_guild");
   if (!g.members.has(newOwnerId)) throw badRequest("not_a_member");
   await withVisibilityDiff(guildId, async () => {
     await prisma.guild.update({ where: { id: guildId }, data: { ownerId: newOwnerId } });

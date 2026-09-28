@@ -11,12 +11,16 @@ import { voice } from "./state/voice";
 import { attachGateway } from "./gateway";
 import { setIO } from "./gateway/io";
 import { startJobs } from "./jobs";
+import { loadInstanceSettings } from "./services/instance";
+import { lockPublicDemoAccount } from "./services/admin";
 
 async function main() {
   await tuneSqlite();
+  await loadInstanceSettings();
   await cache.loadAll();
 
   const app = await buildApp();
+  await lockPublicDemoAccount(app.log);
   await app.listen({ port: config.PORT, host: config.HOST });
   const io = attachGateway(app.server, app.log);
   const timers = startJobs(app.log);

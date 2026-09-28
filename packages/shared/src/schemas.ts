@@ -225,6 +225,14 @@ export const ackSchema = z.object({ messageId: zId.nullable().optional() });
 
 export const settingsSchema = z.record(z.string(), z.unknown());
 
+// ── instance administration ────────────────────────────────────────────────
+export const instanceSettingsSchema = z.object({
+  registration: z.enum(["open", "invite", "closed"]).optional(),
+  serverName: z.string().trim().min(1).max(64).optional(),
+});
+export const adminFlagSchema = z.object({ value: z.boolean() });
+export const adminTransferSchema = z.object({ userId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/) });
+
 /** Flatten zod issues into `{ "path.to.field": "code_or_message" }`. */
 export function issuesToFields(issues: readonly { path: readonly PropertyKey[]; message: string }[]): Record<string, string> {
   const out: Record<string, string> = {};

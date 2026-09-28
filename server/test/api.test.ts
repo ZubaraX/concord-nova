@@ -371,6 +371,80 @@ describe("friends and DMs", () => {
   });
 });
 
+describe("instance admin", () => {
+  it("only instance admins reach /api/admin", async () => {
+    expect((await api("GET", "/api/admin/overview", alice.token)).status).toBe(200);
+    const denied = await api("GET", "/api/admin/overview", bob.token);
+    expect(denied.status).toBe(403);
+    expect(denied.body.error.code).toBe("admin_only");
+  });
+
+  it("reset a password, disable and re-enable an account", async () => {
+    const hank = await register("hank");
+    const reset = await api<{ password: string }>("POST", `/api/admin/users/${hank.id}/password`, alice.token);
+    expect(reset.status).toBe(200);
+    expect(reset.body.password).toMatch(/^[a-z2-9]{4}-[a-z2-9]{4}-[a-z2-9]{4}$/);
+    // the old session is gone, the new password works
+    expect((await api("GET", "/api/auth/me", hank.token)).status).toBe(401);
+    expect((await api("POST", "/api/auth/login", null, { login: "hank", password: reset.body.password })).status).toBe(200);
+
+    expect((await api("POST", `/api/admin/users/${hank.id}/disabled`, alice.token, { value: true })).status).toBe(200);
+    const blocked = await api("POST", "/api/auth/login", null, { login: "hank", password: reset.body.password });
+    expect(blocked.status).toBe(403);
+    expect(blocked.body.error.code).toBe("account_disabled");
+    expect((await api("POST", `/api/admin/users/${hank.id}/disabled`, alice.token, { value: false })).status).toBe(200);
+    expect((await api("POST", "/api/auth/login", null, { login: "hank", password: reset.body.password })).status).toBe(200);
+
+    // an admin can't lock themselves out
+    expect((await api("POST", `/api/admin/users/${alice.id}/disabled`, alice.token, { value: true })).status).toBe(400);
+    expect((await api("POST", `/api/admin/users/${alice.id}/admin`, alice.token, { value: false })).status).toBe(400);
+  });
+
+  it("registration mode is switchable at runtime", async () => {
+    expect((await api("PUT", "/api/admin/settings", alice.token, { registration: "closed" })).status).toBe(200);
+    expect((await api<{ registration: string }>("GET", "/api/auth/info")).body.registration).toBe("closed");
+    const r = await api("POST", "/api/auth/register", null, { username: "ivan", email: "ivan@example.com", password: "correct-horse-battery" });
+    expect(r.status).toBe(403);
+    expect(r.body.error.code).toBe("registration_closed");
+    expect((await api("PUT", "/api/admin/settings", alice.token, { registration: "open" })).status).toBe(200);
+  });
+
+  it("transfer a server to another member", async () => {
+    const g = await api<GuildCreatePayload>("POST", "/api/guilds", bob.token, { name: "Bob's place" });
+    const invite = await api<{ code: string }>("POST", `/api/guilds/${g.body.id}/invites`, bob.token, {});
+    await api("POST", `/api/invites/${invite.body.code}`, alice.token);
+    // The owner picker lists this server's members only.
+    const members = await api<{ id: string }[]>("GET", `/api/admin/users?guild=${g.body.id}`, alice.token);
+    expect(members.body.map((u) => u.id).sort()).toEqual([alice.id, bob.id].sort());
+    expect((await api("POST", `/api/admin/guilds/${g.body.id}/owner`, alice.token, { userId: alice.id })).status).toBe(200);
+    const list = await api<{ id: string; ownerId: string; ownerDisabled: boolean }[]>("GET", "/api/admin/guilds", alice.token);
+    expect(list.body.find((x) => x.id === g.body.id)).toMatchObject({ ownerId: alice.id, ownerDisabled: false });
+    // …but never to an account that can't sign in.
+    await api("POST", `/api/admin/users/${bob.id}/disabled`, alice.token, { value: true });
+    const refused = await api("POST", `/api/admin/guilds/${g.body.id}/owner`, alice.token, { userId: bob.id });
+    expect(refused.status).toBe(400);
+    expect(refused.body.error.code).toBe("account_disabled");
+    await api("POST", `/api/admin/users/${bob.id}/disabled`, alice.token, { value: false });
+  });
+
+  it("the old Concord demo account with its public password gets locked", async () => {
+    const r = await api("POST", "/api/auth/register", null, { username: "demo", email: "demo@concord.dev", password: "password123" });
+    expect(r.status).toBe(201);
+    // The import renames case-duplicates to demo+concordN@… — those are caught too.
+    expect((await api("POST", "/api/auth/register", null, { username: "demo2", email: "demo+concord2@concord.dev", password: "password123" })).status).toBe(201);
+    expect((await api("POST", "/api/auth/register", null, { username: "demo3", email: "demo+concord3@concord.dev", password: "a-private-one-123" })).status).toBe(201);
+    const { lockPublicDemoAccount } = await import("../src/services/admin");
+    await lockPublicDemoAccount(app.log);
+    const login = await api("POST", "/api/auth/login", null, { login: "demo@concord.dev", password: "password123" });
+    expect(login.status).toBe(401);
+    const users = await api<{ username: string; disabled: boolean; passwordLocked: boolean }[]>("GET", "/api/admin/users?q=demo", alice.token);
+    expect(users.body.find((u) => u.username === "demo")).toMatchObject({ disabled: true, passwordLocked: true });
+    expect(users.body.find((u) => u.username === "demo2")).toMatchObject({ disabled: true, passwordLocked: true });
+    // An account with its own password is left alone.
+    expect(users.body.find((u) => u.username === "demo3")).toMatchObject({ disabled: false, passwordLocked: false });
+  });
+});
+
 describe("android push", () => {
   it("SSE stream carries DM pushes; the push token only works for push", async () => {
     const fred = await register("fred");

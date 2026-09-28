@@ -23,6 +23,9 @@ export default defineConfig({
     launchOptions: {
       args: ["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream", "--autoplay-policy=no-user-gesture-required"],
     },
+    // A missing element fails fast instead of eating the whole test timeout.
+    actionTimeout: 15_000,
+    navigationTimeout: 30_000,
     screenshot: "only-on-failure",
     trace: "retain-on-failure",
   },

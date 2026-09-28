@@ -20,11 +20,20 @@ import { ChannelSettingsModal } from "./ChannelSettings";
 const UserSettings = lazy(() => import("../settings/UserSettings"));
 const GuildSettings = lazy(() => import("../settings/GuildSettings"));
 
+const noop = () => {};
+
 export function ModalHost() {
   const modal = useUI((s) => s.modal);
+  const stack = useUI((s) => s.modalStack);
   const close = () => useUI.getState().popModal();
   if (!modal) return null;
-  return <Suspense fallback={null}>{render(modal, close)}</Suspense>;
+  // The whole stack stays mounted — a confirmation over settings must not reset
+  // the open tab, search or lists underneath it. Only the top entry can close.
+  return [...stack, modal].map((m, i) => (
+    <Suspense key={i} fallback={null}>
+      {render(m, i === stack.length ? close : noop)}
+    </Suspense>
+  ));
 }
 
 function render(m: ModalState, close: () => void) {

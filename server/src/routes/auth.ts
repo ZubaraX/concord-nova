@@ -3,12 +3,12 @@ import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { UserFlags, loginSchema, passwordSchema, registerSchema, ulid, type AuthResponse } from "@nova/shared";
 import { prisma } from "../db";
-import { config } from "../config";
 import { ApiError, badRequest, conflict, forbidden, parse, unauthorized } from "../lib/errors";
 import { authenticate, createSession, hashPassword, refreshSession, sha256, verifyPassword } from "../lib/auth";
 import { sendMail } from "../lib/mail";
 import { toSelf } from "../services/serialize";
 import { serverInfo } from "../services/info";
+import { instance } from "../services/instance";
 import { acceptInvite, isInviteUsable } from "../services/invites";
 import { revokeSession } from "../services/users";
 
@@ -24,8 +24,8 @@ export async function authRoutes(app: FastifyInstance) {
     const userCount = await prisma.user.count();
     const first = userCount === 0;
     if (!first) {
-      if (config.REGISTRATION === "closed") throw forbidden("registration_closed");
-      if (config.REGISTRATION === "invite" && !(input.invite && (await isInviteUsable(input.invite)))) throw forbidden("invite_required");
+      if (instance.registration === "closed") throw forbidden("registration_closed");
+      if (instance.registration === "invite" && !(input.invite && (await isInviteUsable(input.invite)))) throw forbidden("invite_required");
     }
     if (await prisma.user.findUnique({ where: { username: input.username } })) throw conflict("username_taken");
     if (await prisma.user.findUnique({ where: { email: input.email } })) throw conflict("email_taken");
@@ -59,6 +59,7 @@ export async function authRoutes(app: FastifyInstance) {
     const user = await prisma.user.findUnique({ where: login.includes("@") ? { email: login } : { username: login } });
     const ok = await verifyPassword(input.password, user?.passwordHash ?? (await getDummyHash()));
     if (!user || !ok) throw unauthorized("invalid_credentials");
+    if (user.disabledAt) throw forbidden("account_disabled");
     const tokens = await createSession(user.id, req);
     return { user: toSelf(user), ...tokens } satisfies AuthResponse;
   });
@@ -85,7 +86,7 @@ export async function authRoutes(app: FastifyInstance) {
       });
       await sendMail(
         user.email,
-        `${config.SERVER_NAME} — код для сброса пароля`,
+        `${instance.serverName} — код для сброса пароля`,
         `Ваш код для сброса пароля: ${code}\n\nВведите его в приложении, чтобы задать новый пароль. Код действует 30 минут.\nЕсли вы не запрашивали сброс — просто проигнорируйте это письмо.`
       );
     }

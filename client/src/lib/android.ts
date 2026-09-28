@@ -1,7 +1,7 @@
 // Bridges to the native Android plugins (client/android-extras): background
 // push service (no Google FCM), MediaProjection screen capture, speakerphone,
 // share-target and invite links.
-import { Capacitor, registerPlugin, type PluginListenerHandle } from "@capacitor/core";
+import { Capacitor, CapacitorHttp, registerPlugin, type PluginListenerHandle } from "@capacitor/core";
 import { api } from "./api";
 import { serverBase } from "./server";
 import { isAndroid } from "./platform";
@@ -31,6 +31,28 @@ interface ScreenCapPlugin {
 
 const Native = registerPlugin<NovaNativePlugin>("NovaNative");
 const ScreenCap = registerPlugin<ScreenCapPlugin>("ScreenCap");
+
+// ── updates ──────────────────────────────────────────────────────────────────
+/** 1.2.3 (+ CI build number) as one comparable number. */
+const rank = (version: string, build: number) => version.split(".").reduce((n, p) => n * 1000 + (parseInt(p, 10) || 0), 0) * 100_000 + build;
+
+/**
+ * A sideloaded APK never updates itself: compare with the build CI published
+ * (android-latest.json next to the APK) and return it when it's newer. Fetched
+ * natively — the GitHub download host sends no CORS headers.
+ */
+export async function newerAndroidBuild(): Promise<{ version: string; url: string } | null> {
+  const feed = import.meta.env.VITE_ANDROID_UPDATE_URL;
+  if (!isAndroid || !feed) return null;
+  try {
+    const r = await CapacitorHttp.get({ url: feed, responseType: "json" });
+    const d = (typeof r.data === "string" ? JSON.parse(r.data) : r.data) as { version?: string; build?: number; url?: string };
+    if (r.status !== 200 || !d?.version || !d.url) return null;
+    return rank(d.version, d.build ?? 0) > rank(__APP_VERSION__, __APP_BUILD__) ? { version: d.version, url: d.url } : null;
+  } catch {
+    return null;
+  }
+}
 
 export async function startPush() {
   if (!isAndroid) return;

@@ -12,6 +12,7 @@
 //   --no-migrate       with --purge-old: don't import the old accounts/messages
 //   --domain <name>    HTTPS name (default: <ip-with-dashes>.sslip.io)
 //   --email <addr>     Let's Encrypt contact
+//   --admin <login>    make this existing account (username or email) an instance admin
 //   --port <n>         SSH port (default 22)
 //   --dry-run          write the archive to the temp dir and print what would run
 import { spawn } from "node:child_process";
@@ -23,13 +24,18 @@ import { gzipSync } from "node:zlib";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const argv = process.argv.slice(2);
-const target = argv.find((a) => !a.startsWith("--") && argv[argv.indexOf(a) - 1]?.match(/^--(domain|email|port)$/) == null);
+const target = argv.find((a) => !a.startsWith("--") && argv[argv.indexOf(a) - 1]?.match(/^--(domain|email|port|admin)$/) == null);
 const opt = (n) => {
   const i = argv.indexOf(`--${n}`);
   return i >= 0 ? argv[i + 1] : undefined;
 };
 if (!target || !target.includes("@")) {
-  console.error("usage: node deploy/push.mjs <user@host> [--purge-old] [--no-migrate] [--domain name] [--email addr] [--port n] [--dry-run]");
+  console.error("usage: node deploy/push.mjs <user@host> [--purge-old] [--no-migrate] [--domain name] [--email addr] [--admin login] [--port n] [--dry-run]");
+  process.exit(1);
+}
+const admin = opt("admin")?.trim();
+if (admin && !/^@?[\w.+-]+(@[\w.-]+)?$/.test(admin)) {
+  console.error(`✖ --admin expects a username or an email, got "${admin}"`);
   process.exit(1);
 }
 
@@ -96,6 +102,7 @@ if (argv.includes("--purge-old")) env.push("PURGE_OLD=1");
 if (argv.includes("--no-migrate")) env.push("MIGRATE_OLD=0");
 if (opt("domain")) env.push(`DOMAIN=${q(opt("domain"))}`);
 if (opt("email")) env.push(`EMAIL=${q(opt("email"))}`);
+if (admin) env.push(`NOVA_ADMIN=${q(admin)}`);
 const remote = [
   "set -e",
   "rm -rf /root/nova-deploy && mkdir -p /root/nova-deploy",

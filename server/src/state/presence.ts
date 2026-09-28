@@ -90,6 +90,11 @@ class PresenceState {
     return p;
   }
 
+  /** Users with at least one live connection (any status, invisible included). */
+  connectedCount(): number {
+    return this.sockets.size;
+  }
+
   onlineUserIds(): string[] {
     return [...this.sockets.keys()].filter((u) => this.get(u).status !== "offline");
   }

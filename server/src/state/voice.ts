@@ -50,6 +50,11 @@ class VoiceManager {
     return [...this.states.values()].filter((s) => s.guildId === guildId).map((s) => this.dto(s));
   }
 
+  /** Instance-wide numbers for the admin overview. */
+  stats(): { participants: number; rooms: number; calls: number } {
+    return { participants: this.states.size, rooms: new Set([...this.states.values()].map((s) => s.channelId)).size, calls: this.calls.size };
+  }
+
   countInChannel(channelId: string): number {
     let n = 0;
     for (const s of this.states.values()) if (s.channelId === channelId) n++;

@@ -41,7 +41,7 @@ export function Modal({
     <AnimatePresence>
       {open && (
         <motion.div
-          className="app-layer z-50 flex items-center justify-center p-4"
+          className="app-layer z-[58] flex items-center justify-center p-4"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}

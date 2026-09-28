@@ -14,6 +14,7 @@
 #                empty — its accounts, servers and messages are imported.
 #   MIGRATE_OLD=0  purge without importing the old data
 #   REPO / BRANCH  deploy from git instead of the uploaded source tree
+#   NOVA_ADMIN   username or email of an existing account to make instance admin
 #
 # Safe to re-run: every run is an update. The new build is prepared next to the
 # live one and swapped in only if it builds; if it then fails its health check
@@ -348,6 +349,13 @@ if [ "$OLD_PRESENT" = 1 ]; then
   ok "service, nginx site and $OLD_DIR removed — archive kept at $BACKUP"
 fi
 
+# ── instance admin (push.mjs --admin <login>) ────────────────────────────────
+if [ -n "${NOVA_ADMIN:-}" ]; then
+  say "Admin rights"
+  if (cd server && npx tsx scripts/grant-admin.ts "$NOVA_ADMIN"); then ok "granted"; else warn "not granted (see above) — the rest of the update continues"; fi
+  chown -R nova:nova "$DATA_DIR"
+fi
+
 # ── nginx + certificate ──────────────────────────────────────────────────────
 say "nginx + HTTPS"
 if [ -d "/etc/letsencrypt/live/$DOMAIN" ]; then
@@ -536,10 +544,11 @@ URL="http://${PUBLIC_IP}"
 if [ -d "/etc/letsencrypt/live/$DOMAIN" ] && curl -fsS --max-time 10 "https://${DOMAIN}/health" >/dev/null 2>&1; then
   URL="https://${DOMAIN}"
 fi
+ADMINS=$(sqlite3 "$DATA_DIR/nova.db" 'SELECT group_concat("username", ", ") FROM "User" WHERE ("flags" & 1) != 0 AND "disabledAt" IS NULL;' 2>/dev/null || true)
 cat <<DONE
 
 ✅ Concord Nova is live: ${URL}
-   The first account registered (or the first imported one) administers the instance.
+   Admins:   ${ADMINS:-none yet — re-run the deploy and enter your login when asked} (app: Settings → Nova server)
    Logs:     journalctl -u nova -f   |   journalctl -u livekit -f
    Settings: ${ENV_FILE}  (then: systemctl restart nova)
    Backups:  ${DATA_DIR}/backups

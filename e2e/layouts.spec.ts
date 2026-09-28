@@ -56,3 +56,25 @@ test("desktop app chrome: the title bar stays reachable over settings and dialog
   await expect(p.getByRole("button", { name: "Свернуть" })).toBeVisible();
   noErrors(s);
 });
+
+test("phone voice: participant tiles fit the screen", async ({ browser, request }) => {
+  const alice = await register(request, "Алиса");
+  const bob = await register(request, "Боб");
+  const { guild, voice } = await guildWith(request, alice, [bob]);
+  const a = await openAs(browser, alice, `/#/channels/${guild.id}/${voice.id}`, { viewport: { width: 390, height: 844 } });
+  const b = await openAs(browser, bob, `/#/channels/${guild.id}/${voice.id}`);
+  await b.page.getByRole("button", { name: "Зайти в канал" }).click();
+  await a.page.getByRole("button", { name: "Зайти в канал" }).click();
+  // The grid is sized from the stage once it exists (it used to keep an 800 px guess).
+  for (const id of [alice.id, bob.id]) {
+    const tile = a.page.locator(`[data-user="${id}"]`);
+    await expect(tile).toBeVisible();
+    await expect.poll(async () => {
+      const box = (await tile.boundingBox())!;
+      return box.x >= 0 && box.x + box.width <= 390 && box.width > 300;
+    }).toBe(true);
+  }
+  await a.page.getByRole("button", { name: "Отключиться" }).first().click();
+  await b.page.getByRole("button", { name: "Отключиться" }).first().click();
+  noErrors(a, b);
+});

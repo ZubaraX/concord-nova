@@ -22,6 +22,8 @@ jobs:
     env:
       VITE_API_URL: ${{ vars.NOVA_SERVER_URL || 'https://138-16-224-172.sslip.io' }}
       VITE_API_URL_FALLBACK: ${{ vars.NOVA_SERVER_FALLBACK || 'http://138.16.224.172' }}
+      # The app compares itself with this file and offers newer APKs.
+      VITE_ANDROID_UPDATE_URL: https://github.com/${{ github.repository }}/releases/download/android/android-latest.json
       NOVA_BUILD_NUMBER: ${{ github.run_number }}
       ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
     steps:
@@ -67,6 +69,8 @@ jobs:
         with:
           tag_name: android
           name: Concord Nova for Android
+          # "Latest" must stay the newest desktop release: electron-updater reads latest.yml from it.
+          make_latest: false
           body: Install ConcordNova.apk on your phone (allow installing from this source when asked).
           files: |
             ConcordNova.apk

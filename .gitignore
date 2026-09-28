@@ -28,3 +28,4 @@ client/android/
 
 # Playwright end-to-end runs
 .e2e-results/
+.e2e-screens/

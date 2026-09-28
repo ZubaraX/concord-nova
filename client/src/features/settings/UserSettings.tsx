@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import clsx from "clsx";
 import { Monitor, Smartphone, Globe, Upload, Trash2, Mic, Check } from "lucide-react";
-import { hexToColor, colorToHex, type SessionDTO } from "@nova/shared";
+import { hexToColor, colorToHex, UserFlags, type SessionDTO } from "@nova/shared";
 import { api, uploadImage } from "../../lib/api";
 import { errorText, t, useLocale, type Locale } from "../../lib/i18n";
 import { toast } from "../../lib/bus";
@@ -19,12 +19,14 @@ import { UserAvatar } from "../../components/ui/avatar";
 import { Markdown } from "../chat/markdown";
 import { startMicTest } from "../voice/processor";
 import { SettingsLayout, SectionTitle, Group } from "./SettingsLayout";
+import { AdminGuilds, AdminOverview, AdminUsers } from "./AdminSettings";
 
-type Tab = "account" | "profile" | "appearance" | "voice" | "notifications" | "keybinds" | "sessions" | "language" | "advanced" | "desktop" | "about";
+type Tab = "account" | "profile" | "appearance" | "voice" | "notifications" | "keybinds" | "sessions" | "language" | "advanced" | "desktop" | "about" | "admin-overview" | "admin-users" | "admin-guilds";
 
 export default function UserSettings({ tab: initial, onClose }: { tab?: string; onClose: () => void }) {
   const [tab, setTab] = useState<Tab | null>((initial as Tab) ?? (window.innerWidth < 768 ? null : "account"));
   useLocale();
+  const admin = useData((s) => !!s.me && (s.me.flags & UserFlags.INSTANCE_ADMIN) !== 0);
   const sections = [
     {
       title: t("settings.userSection"),
@@ -47,6 +49,18 @@ export default function UserSettings({ tab: initial, onClose }: { tab?: string; 
         { id: "about", label: t("settings.about") },
       ],
     },
+    ...(admin
+      ? [
+          {
+            title: t("admin.section"),
+            items: [
+              { id: "admin-overview", label: t("admin.overview") },
+              { id: "admin-users", label: t("admin.users") },
+              { id: "admin-guilds", label: t("admin.guilds") },
+            ],
+          },
+        ]
+      : []),
     {
       items: [
         {
@@ -71,6 +85,9 @@ export default function UserSettings({ tab: initial, onClose }: { tab?: string; 
       {tab === "advanced" && <Advanced />}
       {tab === "desktop" && <Desktop />}
       {tab === "about" && <About />}
+      {admin && tab === "admin-overview" && <AdminOverview />}
+      {admin && tab === "admin-users" && <AdminUsers />}
+      {admin && tab === "admin-guilds" && <AdminGuilds />}
     </SettingsLayout>
   );
 }

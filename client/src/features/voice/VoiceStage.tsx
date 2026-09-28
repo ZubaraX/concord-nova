@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import clsx from "clsx";
 import { AnimatePresence, motion } from "motion/react";
@@ -138,16 +138,16 @@ function gridFor(n: number, w: number, h: number) {
   return best;
 }
 
-function useSize(ref: React.RefObject<HTMLElement | null>) {
-  const [size, setSize] = useState({ w: 800, h: 500 });
-  useEffect(() => {
-    const el = ref.current;
+/** Content-box size of an element that may mount later (a callback ref, not an effect on first render). */
+function useSize() {
+  const [size, setSize] = useState({ w: 0, h: 0 });
+  const ref = useCallback((el: HTMLElement | null) => {
     if (!el) return;
     const ro = new ResizeObserver(([e]) => setSize({ w: e.contentRect.width, h: e.contentRect.height }));
     ro.observe(el);
     return () => ro.disconnect();
-  }, [ref]);
-  return size;
+  }, []);
+  return [ref, size] as const;
 }
 
 // ── stage ────────────────────────────────────────────────────────────────────
@@ -161,9 +161,8 @@ export function VoiceStage({ channelId, compact, onToggleChat, chatOpen }: { cha
   const channel = useData((s) => s.channels[channelId]);
   const title = useData((s) => channelTitle(s, channel));
   const guildId = channel?.guildId ?? null;
-  const area = useRef<HTMLDivElement>(null);
   const root = useRef<HTMLDivElement>(null);
-  const { w, h } = useSize(area);
+  const [area, { w, h }] = useSize();
   const [fullscreen, setFullscreen] = useState(false);
 
   useEffect(() => {

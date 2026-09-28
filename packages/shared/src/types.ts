@@ -333,6 +333,59 @@ export interface ServerInfoDTO {
   maxMessageLength: number;
   registration: "open" | "invite" | "closed";
   mail: boolean;
+  /** Build id of the web client this server serves (null in dev) — open tabs compare it to offer a reload. */
+  webBuild: string | null;
+}
+
+// ── instance administration ────────────────────────────────────────────────
+export type RegistrationMode = "open" | "invite" | "closed";
+
+export interface AdminOverviewDTO {
+  version: string;
+  node: string;
+  uptimeSec: number;
+  serverName: string;
+  registration: RegistrationMode;
+  users: number;
+  usersDisabled: number;
+  admins: number;
+  guilds: number;
+  channels: number;
+  messages: number;
+  attachments: number;
+  /** Bytes, as strings (may exceed 2^53). */
+  storageBytes: string;
+  databaseBytes: string;
+  connected: number;
+  voice: { participants: number; rooms: number; calls: number };
+}
+
+export interface AdminUserDTO {
+  id: string;
+  username: string;
+  displayName: string | null;
+  email: string;
+  avatar: string | null;
+  createdAt: string;
+  lastActiveAt: string | null;
+  admin: boolean;
+  disabled: boolean;
+  /** Can't sign in until an admin resets the password (e.g. a public default was locked). */
+  passwordLocked: boolean;
+  guilds: number;
+  sessions: number;
+}
+
+export interface AdminGuildDTO {
+  id: string;
+  name: string;
+  icon: string | null;
+  ownerId: string;
+  ownerName: string;
+  /** The owner's account is disabled — the server needs a new owner. */
+  ownerDisabled: boolean;
+  members: number;
+  createdAt: string;
 }
 
 export interface ReadyPayload {

@@ -1,3 +1,5 @@
+import { execFileSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { expect, type APIRequestContext, type Browser, type BrowserContext, type Page } from "@playwright/test";
 
 export const BASE = process.env.E2E_URL ?? "http://localhost:5173";
@@ -25,6 +27,11 @@ export async function register(request: APIRequestContext, displayName: string):
   expect(res.status(), await res.text()).toBe(201);
   const b = await res.json();
   return { id: b.user.id, username, displayName, email, password, access: b.accessToken, refresh: b.refreshToken };
+}
+
+/** Instance-admin rights the way a deploy grants them (deploy/setup.sh → scripts/grant-admin.ts). Local stack only. */
+export function grantAdmin(user: User) {
+  execFileSync(process.execPath, ["--import", "tsx", "scripts/grant-admin.ts", user.username], { cwd: fileURLToPath(new URL("../server/", import.meta.url)), stdio: "pipe" });
 }
 
 export async function api<T = any>(request: APIRequestContext, user: User, method: string, path: string, data?: unknown): Promise<T> {

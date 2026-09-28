@@ -55,6 +55,8 @@ export class MicProcessor implements TrackProcessor<Track.Kind.Audio, AudioProce
   private analyser: AnalyserNode | null = null;
   private buf: Float32Array<ArrayBuffer> | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
+  /** Bumped by every teardown: a build still awaiting RNNoise knows it was cancelled. */
+  private generation = 0;
   private lastLoud = 0;
   private lastTalkMuted = 0;
   private noiseFloor = -60;
@@ -83,6 +85,7 @@ export class MicProcessor implements TrackProcessor<Track.Kind.Audio, AudioProce
   }
 
   private async build(track: MediaStreamTrack) {
+    const gen = this.generation;
     // RNNoise is trained at 48 kHz — run our own context at that rate.
     const ctx = new AudioContext({ sampleRate: 48_000, latencyHint: "interactive" });
     this.ctx = ctx;
@@ -94,10 +97,13 @@ export class MicProcessor implements TrackProcessor<Track.Kind.Audio, AudioProce
     if (settings().noise === "rnnoise") {
       try {
         const rn = await rnnoiseNode(ctx);
+        // Left the channel while the model loaded: the context is closed, stop here.
+        if (gen !== this.generation) return void (rn as { destroy?: () => void }).destroy?.();
         head.connect(rn);
         head = rn;
         this.nodes.push(rn);
       } catch (e) {
+        if (gen !== this.generation) return;
         console.warn("[mic] RNNoise unavailable, continuing without it", e);
       }
     }
@@ -120,7 +126,7 @@ export class MicProcessor implements TrackProcessor<Track.Kind.Audio, AudioProce
     this.analyser = analyser;
     this.buf = new Float32Array(analyser.fftSize);
     this.processedTrack = dest.stream.getAudioTracks()[0];
-    void ctx.resume();
+    void ctx.resume().catch(() => {});
     this.timer = setInterval(() => this.tick(), 20);
   }
 
@@ -166,6 +172,7 @@ export class MicProcessor implements TrackProcessor<Track.Kind.Audio, AudioProce
   }
 
   private async teardown() {
+    this.generation++;
     if (this.timer) clearInterval(this.timer);
     this.timer = null;
     for (const n of this.nodes) {

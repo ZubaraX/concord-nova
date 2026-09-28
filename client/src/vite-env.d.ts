@@ -1,12 +1,18 @@
 /// <reference types="vite/client" />
 
 declare const __APP_VERSION__: string;
+/** Id of this web build (null in dev) — see vite.config.ts. */
+declare const __NOVA_BUILD__: string | null;
+/** CI run number of this build (0 for local builds). */
+declare const __APP_BUILD__: number;
 
 interface ImportMetaEnv {
   /** Server base URL baked into desktop/Android builds (e.g. https://chat.example.com). */
   readonly VITE_API_URL?: string;
   /** Optional fallback base for networks that can't reach the primary. */
   readonly VITE_API_URL_FALLBACK?: string;
+  /** Android: android-latest.json of the published APK (update prompt). */
+  readonly VITE_ANDROID_UPDATE_URL?: string;
 }
 
 /** Bridge exposed by the Electron preload script (desktop app only). */

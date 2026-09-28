@@ -35,7 +35,7 @@ const schema = z.object({
   ACCESS_TOKEN_TTL: z.coerce.number().int().default(900),
   REFRESH_TOKEN_TTL: z.coerce.number().int().default(60 * 86_400),
 
-  /** open | invite (a valid server invite is required) | closed */
+  /** open | invite (a valid server invite is required) | closed — default; admins can change it in the app. */
   REGISTRATION: z.enum(["open", "invite", "closed"]).default("open"),
 
   MAX_MESSAGE_LENGTH: z.coerce.number().int().min(100).max(100_000).default(20_000),

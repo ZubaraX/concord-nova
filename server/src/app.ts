@@ -16,6 +16,7 @@ import { channelRoutes } from "./routes/channels";
 import { fileRoutes } from "./routes/files";
 import { voiceRoutes } from "./routes/voice";
 import { inviteRoutes, pushRoutes } from "./routes/misc";
+import { adminRoutes } from "./routes/admin";
 
 const NON_SPA = /^\/(api|files|socket\.io|media-proxy|rtc|health)(\/|$|\?)/;
 
@@ -61,6 +62,7 @@ export async function buildApp(opts: { logger?: boolean | object } = {}): Promis
   await app.register(inviteRoutes, { prefix: "/api/invites" });
   await app.register(voiceRoutes, { prefix: "/api/voice" });
   await app.register(pushRoutes, { prefix: "/api/push" });
+  await app.register(adminRoutes, { prefix: "/api/admin" });
   await app.register(fileRoutes);
 
   // Web client (built into client/dist) — the same app in any browser.
