@@ -1,7 +1,7 @@
 import { useMemo, useState, type FormEvent } from "react";
 import clsx from "clsx";
 import { ArrowLeft, Check, MessageSquare, MoreVertical, Phone, Search, Users, X, Volume2 } from "lucide-react";
-import { RelationshipType, USERNAME_RE } from "@nova/shared";
+import { RelationshipType } from "@nova/shared";
 import { api } from "../../lib/api";
 import { errorText, t } from "../../lib/i18n";
 import { toast } from "../../lib/bus";
@@ -181,12 +181,14 @@ function AddFriend() {
   const [busy, setBusy] = useState(false);
   const submit = async (e: FormEvent) => {
     e.preventDefault();
-    const username = value.trim().replace(/^@/, "").toLowerCase();
-    if (!USERNAME_RE.test(username)) return setResult({ ok: false, text: t("errors.username_invalid") });
+    // Username, "@username" or the display name — the server resolves it.
+    const query = value.trim();
+    if (!query) return;
     setBusy(true);
     try {
-      await api("/api/users/@me/relationships", { method: "POST", body: { username } });
-      setResult({ ok: true, text: t("friends.requestSent", { name: username }) });
+      const { userId } = await api<{ userId: string }>("/api/users/@me/relationships", { method: "POST", body: { username: query } });
+      const u = useData.getState().users[userId];
+      setResult({ ok: true, text: t("friends.requestSent", { name: u ? `${u.displayName || u.username} (@${u.username})` : query }) });
       setValue("");
     } catch (err) {
       setResult({ ok: false, text: errorText(err) });

@@ -342,6 +342,28 @@ describe("friends and DMs", () => {
     expect((await api("POST", `/api/channels/${dm.body.id}/messages`, carol.token, { content: "hello?" })).status).toBe(403);
   });
 
+  it("friend requests find people by @handle, old Name#1234 or unique display name", async () => {
+    const gleb = await register("gleb");
+    const hana = await register("hana");
+    const hana2 = await register("hana_two");
+    expect((await api("PATCH", "/api/users/@me", hana.token, { displayName: "Ханна Ёлкина" })).status).toBe(200);
+    // by handle, any case, with @ and an old discriminator
+    const r1 = await api<{ userId: string }>("POST", "/api/users/@me/relationships", gleb.token, { username: "@HANA#4821" });
+    expect(r1.status, JSON.stringify(r1.body)).toBe(200);
+    expect(r1.body.userId).toBe(hana.id);
+    await api("DELETE", `/api/users/@me/relationships/${hana.id}`, gleb.token);
+    // by display name: case- and ё-insensitive
+    const r2 = await api<{ userId: string }>("POST", "/api/users/@me/relationships", gleb.token, { username: "  ханна елкина " });
+    expect(r2.status, JSON.stringify(r2.body)).toBe(200);
+    expect(r2.body.userId).toBe(hana.id);
+    // two people with that display name → ask for the handle instead
+    expect((await api("PATCH", "/api/users/@me", hana2.token, { displayName: "Ханна Ёлкина" })).status).toBe(200);
+    const r3 = await api<{ error: { code: string } }>("POST", "/api/users/@me/relationships", gleb.token, { username: "Ханна Ёлкина" });
+    expect(r3.body.error.code).toBe("ambiguous_user");
+    const r4 = await api<{ error: { code: string } }>("POST", "/api/users/@me/relationships", gleb.token, { username: "nobody-like-this" });
+    expect(r4.body.error.code).toBe("unknown_user");
+  });
+
   it("strangers without a shared guild can't open a DM", async () => {
     const dave = await register("dave");
     const erin = await register("erin");

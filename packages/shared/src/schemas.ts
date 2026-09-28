@@ -197,7 +197,8 @@ export const inviteCreateSchema = z.object({
   channelId: zId.optional(),
 });
 
-export const relationshipRequestSchema = z.object({ username: usernameSchema });
+/** Free text: a username ("@name", old "Name#1234") or an exact display name — resolved server-side. */
+export const relationshipRequestSchema = z.object({ username: z.string().trim().min(1).max(64) });
 
 export const groupDmCreateSchema = z.object({
   recipients: z.array(zId).min(1).max(LIMITS.groupDmMax - 1),
