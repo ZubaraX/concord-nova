@@ -410,6 +410,22 @@ async function main() {
   }
   const valid = new Set(newChannels.map((c) => c.id));
   for (const c of newChannels) if (c.parentId && !valid.has(c.parentId)) c.parentId = null;
+  // Concord's own template made "Text Channels"/"Voice Channels" categories but
+  // never linked channels to them (its client grouped by type). Do that linking
+  // here, only for channels without a parent, so the sidebar looks the same.
+  for (const g of newGuilds) {
+    const cats = newChannels.filter((c) => c.guildId === g.id && c.type === "category");
+    const textCat = cats.find((c) => /text|текст/i.test(c.name ?? ""));
+    const voiceCat = cats.find((c) => /voice|голос/i.test(c.name ?? ""));
+    for (const c of newChannels) {
+      if (c.guildId !== g.id || c.parentId || c.type === "category" || c.type === "thread") continue;
+      const cat = c.type === "voice" ? voiceCat : textCat;
+      if (cat) {
+        c.parentId = cat.id;
+        bump("channels put into categories");
+      }
+    }
+  }
   await insert("channels", newChannels, (c) => prisma.channel.createMany({ data: c }));
   await insert("DM recipients", recipients, (c) => prisma.channelRecipient.createMany({ data: c }));
 

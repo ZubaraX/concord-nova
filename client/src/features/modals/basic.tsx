@@ -6,7 +6,7 @@ import { Permission, type ChannelDTO, type GuildCreatePayload, type InviteDTO } 
 import { api, uploadImage } from "../../lib/api";
 import { errorText, t } from "../../lib/i18n";
 import { toast } from "../../lib/bus";
-import { mediaUrl } from "../../lib/server";
+import { mediaUrl, webLink } from "../../lib/server";
 import { getLocale } from "../../lib/i18n";
 import { RelationshipType } from "@nova/shared";
 import { displayName, useData } from "../../store/data";
@@ -257,10 +257,7 @@ const AGES = [1800, 3600, 21600, 43200, 86400, 604800, 0];
 const ageLabel = (v: number) =>
   v === 0 ? t("invite.noExpiry") : v < 3600 ? t("time.minutesLong", { n: v / 60 }) : v < 86400 ? t("poll.hours", { n: v / 3600 }) : t("poll.days", { n: v / 86400 });
 
-export function inviteLink(code: string) {
-  const base = location.protocol.startsWith("http") ? location.origin : (import.meta.env.VITE_API_URL as string | undefined) ?? "";
-  return `${base.replace(/\/$/, "")}/invite/${code}`;
-}
+export const inviteLink = (code: string) => webLink(`/invite/${code}`);
 
 export function InviteModal({ guildId, channelId, onClose }: { guildId: string; channelId?: string; onClose: () => void }) {
   const guild = useData((s) => s.guilds[guildId]);

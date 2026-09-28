@@ -37,6 +37,17 @@ ok() { printf '  \033[32m✓\033[0m %s\n' "$*"; }
 warn() { printf '  \033[33m!\033[0m %s\n' "$*"; }
 die() { printf '\n\033[31m✖ %s\033[0m\n' "$*"; exit 1; }
 
+# Whatever this script stopped comes back if it fails half-way.
+OLD_STOPPED=0
+NOVA_STOPPED=0
+on_exit() {
+  local rc=$?
+  [ "$rc" = 0 ] && return
+  if [ "$OLD_STOPPED" = 1 ] && systemctl start concord >/dev/null 2>&1; then warn "old Concord restarted — nothing was removed"; fi
+  if [ "$NOVA_STOPPED" = 1 ] && systemctl start nova >/dev/null 2>&1; then warn "the running Nova version was restarted"; fi
+}
+trap on_exit EXIT
+
 [ "$(id -u)" = 0 ] || die "run as root"
 . /etc/os-release 2>/dev/null || true
 [ "${ID:-}" = ubuntu ] || [ "${ID_LIKE:-}" = debian ] || [ "${ID:-}" = debian ] || warn "tested on Ubuntu; continuing on ${PRETTY_NAME:-unknown OS}"
@@ -52,7 +63,7 @@ apt-get update -y -qq
 apt-get install -y -qq curl ca-certificates git nginx ufw openssl sqlite3 tar gzip certbot >/dev/null
 ok "nginx, certbot, sqlite3, ufw"
 
-if [ "$(awk '/MemTotal/ {print $2}' /proc/meminfo)" -lt 2000000 ] && ! swapon --show | grep -q .; then
+if [ "$(awk '/MemTotal/ {print $2}' /proc/meminfo)" -lt 2000000 ] && [ -z "$(swapon --show 2>/dev/null)" ]; then
   say "Swap (small VPS: keeps npm/vite builds from running out of memory)"
   fallocate -l 2G /swapfile && chmod 600 /swapfile && mkswap /swapfile >/dev/null && swapon /swapfile
   grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >>/etc/fstab
@@ -132,6 +143,13 @@ set +a
 # ── TLS certificate (webroot; reuses an existing one for the same name) ──────
 nginx_conf() {
   local tls="$1"
+  # IPv6 listeners only where the kernel has IPv6 (nginx refuses to start otherwise).
+  local v6_80d="# no IPv6 on this host" v6_80="# no IPv6 on this host" v6_443="# no IPv6 on this host"
+  if [ -f /proc/net/if_inet6 ]; then
+    v6_80d="listen [::]:80 default_server;"
+    v6_80="listen [::]:80;"
+    v6_443="listen [::]:443 ssl http2;"
+  fi
   cat >/etc/nginx/snippets/nova-proxy.conf <<'NGX'
 proxy_http_version 1.1;
 proxy_set_header Host $host;
@@ -192,7 +210,7 @@ upstream nova_app { server 127.0.0.1:${PORT}; keepalive 32; }
 # Plain HTTP by IP keeps working for the apps' fallback; ACME lives here too.
 server {
     listen 80 default_server;
-    listen [::]:80 default_server;
+    ${v6_80d}
     server_name _;
     include snippets/nova-app.conf;
 }
@@ -202,7 +220,7 @@ NGX
 
 server {
     listen 80;
-    listen [::]:80;
+    ${v6_80}
     server_name ${DOMAIN};
     location /.well-known/acme-challenge/ { root ${ACME_ROOT}; }
     location / { return 301 https://\$host\$request_uri; }
@@ -210,7 +228,7 @@ server {
 
 server {
     listen 443 ssl http2;
-    listen [::]:443 ssl http2;
+    ${v6_443}
     server_name ${DOMAIN};
     ssl_certificate     /etc/letsencrypt/live/${DOMAIN}/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/${DOMAIN}/privkey.pem;
@@ -244,13 +262,21 @@ fi
 say "Build (npm ci + server bundle + web client)"
 cd "$APP_DIR.new"
 export ELECTRON_SKIP_BINARY_DOWNLOAD=1 CHECKPOINT_DISABLE=1 PRISMA_HIDE_UPDATE_MESSAGE=1
-npm ci --no-audit --no-fund --loglevel=error
+# --include=dev: NODE_ENV=production (from nova.env) would otherwise skip the
+# build tools (esbuild, vite, tsx) that the build and the Concord import need.
+npm ci --include=dev --no-audit --no-fund --loglevel=error
 # Same-origin web build: no VITE_API_URL, the page talks to the server that serves it.
 env -u VITE_API_URL npm run build >/tmp/nova-build.log 2>&1 || { tail -40 /tmp/nova-build.log; die "build failed — the live version keeps running"; }
 ok "built $(node -p 'require("./package.json").version')"
 
 # ── database: backup, then schema migrations ─────────────────────────────────
 say "Database"
+# Schema migrations need the database to themselves: pause the live server
+# (it comes back with the new version below, or the old one on failure).
+if systemctl is-active -q nova 2>/dev/null; then
+  NOVA_STOPPED=1
+  systemctl stop nova
+fi
 if [ -f "$DATA_DIR/nova.db" ]; then
   sqlite3 "$DATA_DIR/nova.db" ".backup '$DATA_DIR/backups/pre-update-$STAMP.db'"
   ls -1t "$DATA_DIR"/backups/pre-update-*.db 2>/dev/null | tail -n +11 | xargs -r rm -f
@@ -263,6 +289,8 @@ ok "schema up to date"
 # ── old Concord: archive → import → remove ───────────────────────────────────
 if [ "$OLD_PRESENT" = 1 ]; then
   say "Old Concord: archive"
+  # From here until it is removed, any failure brings the old service back up.
+  OLD_STOPPED=1
   systemctl stop concord 2>/dev/null || true
   OLD_ENV="$OLD_DIR/.env"
   OLD_DB_URL=$(grep -E '^DATABASE_URL=' "$OLD_ENV" 2>/dev/null | cut -d= -f2- | tr -d '"'"'" || true)
@@ -278,9 +306,10 @@ if [ "$OLD_PRESENT" = 1 ]; then
   for p in "${OLD_DIR#/}" etc/systemd/system/concord.service etc/nginx/sites-available/concord; do [ -e "/$p" ] && PATHS+=("$p"); done
   if [ "${#PATHS[@]}" -gt 0 ]; then
     tar -C / --exclude='node_modules' --exclude='*/client/release' --exclude='*/client/dist-electron' -czf "$BACKUP" "${PATHS[@]}"
-    tar -tzf "$BACKUP" >/dev/null || die "backup archive is unreadable — nothing was removed"
-    if [ -f "$OLD_DB" ]; then
-      tar -tzf "$BACKUP" | grep -q "${OLD_DB#/}$" || die "old database missing from the backup — nothing was removed"
+    # Read the whole listing first: `tar | grep -q` would SIGPIPE tar and fail under pipefail.
+    LISTING=$(tar -tzf "$BACKUP") || die "backup archive is unreadable — nothing was removed"
+    if [ -f "$OLD_DB" ] && ! grep -qxF "${OLD_DB#/}" <<<"$LISTING"; then
+      die "old database missing from the backup — nothing was removed"
     fi
     chmod 600 "$BACKUP"
     ok "$BACKUP ($(du -h "$BACKUP" | cut -f1))"
@@ -298,8 +327,6 @@ if [ "$OLD_PRESENT" = 1 ]; then
         rm -f "$DATA_DIR"/nova.db "$DATA_DIR"/nova.db-*
         (cd server && node scripts/prisma.mjs migrate deploy >/dev/null)
         chown -R nova:nova "$DATA_DIR"
-        PURGE_OLD=0
-        systemctl start concord 2>/dev/null || true
         die "fix the import problem above, then re-run with PURGE_OLD=1 (backup: $BACKUP)"
       fi
     else
@@ -308,6 +335,7 @@ if [ "$OLD_PRESENT" = 1 ]; then
   fi
 
   say "Old Concord: remove"
+  OLD_STOPPED=0
   systemctl disable --now concord 2>/dev/null || true
   rm -f /etc/systemd/system/concord.service
   systemctl daemon-reload
@@ -403,11 +431,16 @@ UNIT
 # ── firewall ─────────────────────────────────────────────────────────────────
 say "Firewall"
 # Never lock ourselves out: also allow whatever port sshd really listens on.
-ufw allow OpenSSH >/dev/null
-for p in $(ss -Htlnp 2>/dev/null | awk '/sshd/ {n = split($4, a, ":"); print a[n]}' | sort -u); do ufw allow "$p/tcp" >/dev/null; done
-for r in 80/tcp 443/tcp 7881/tcp 3478/udp 5349/tcp 50000:60000/udp; do ufw allow "$r" >/dev/null; done
-ufw --force enable >/dev/null
-ok "ssh, http(s), webrtc 7881/tcp 50000-60000/udp, turn 3478/udp 5349/tcp"
+if (
+  { ufw allow OpenSSH >/dev/null 2>&1 || ufw allow 22/tcp >/dev/null; } &&
+    for p in $(ss -Htlnp 2>/dev/null | awk '/sshd/ {n = split($4, a, ":"); print a[n]}' | sort -u); do ufw allow "$p/tcp" >/dev/null || exit 1; done &&
+    for r in 80/tcp 443/tcp 7881/tcp 3478/udp 5349/tcp 50000:60000/udp; do ufw allow "$r" >/dev/null || exit 1; done &&
+    ufw --force enable >/dev/null
+); then
+  ok "ssh, http(s), webrtc 7881/tcp 50000-60000/udp, turn 3478/udp 5349/tcp"
+else
+  warn "ufw could not be configured — open these ports in your provider's firewall: 80,443,7881/tcp 5349/tcp 3478/udp 50000-60000/udp"
+fi
 
 # ── services ─────────────────────────────────────────────────────────────────
 cat >/etc/systemd/system/nova.service <<UNIT
@@ -479,6 +512,7 @@ healthy() {
   done
   return 1
 }
+NOVA_STOPPED=0 # from here the swap/rollback below owns the service
 rm -rf "$APP_DIR.prev"
 [ -d "$APP_DIR" ] && mv "$APP_DIR" "$APP_DIR.prev"
 mv "$APP_DIR.new" "$APP_DIR"

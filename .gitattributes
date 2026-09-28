@@ -4,3 +4,4 @@ client/android-extras/** text eol=lf
 *.png binary
 *.ico binary
 *.db binary
+*.cmd text eol=crlf

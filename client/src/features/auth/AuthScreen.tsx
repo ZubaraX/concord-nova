@@ -30,9 +30,18 @@ export function AuthScreen() {
   const [info, setInfo] = useState<ServerInfoDTO | null>(null);
   const [invite, setInvite] = useState<InviteDTO | null>(null);
 
+  // Explain a dead end instead of failing on submit: server unreachable, or
+  // reachable but not running Concord Nova yet (e.g. the old Concord).
+  const [serverIssue, setServerIssue] = useState<"down" | "old" | null>(null);
   useEffect(() => {
     if (needServer) return;
-    api<ServerInfoDTO>("/api/auth/info", { auth: false }).then(setInfo).catch(() => setInfo(null));
+    setServerIssue(null);
+    api<ServerInfoDTO>("/api/auth/info", { auth: false })
+      .then((i) => setInfo(i))
+      .catch((e) => {
+        setInfo(null);
+        setServerIssue(e instanceof ApiError && e.status > 0 && e.status < 500 ? "old" : "down");
+      });
     if (inviteFromUrl) api<InviteDTO>(`/api/invites/${inviteFromUrl}`, { auth: false }).then(setInvite).catch(() => {});
   }, [needServer]);
 
@@ -42,6 +51,14 @@ export function AuthScreen() {
         <Hero />
         <div className="w-full max-w-[440px] justify-self-center lg:justify-self-end">
           <div className="glass rounded-[22px] p-7 shadow-lift sm:p-8">
+            {serverIssue && !needServer && (
+              <div role="alert" className="mb-5 rounded-xl bg-bad/10 px-4 py-3 text-[13px] leading-relaxed text-fg ring-1 ring-bad/30">
+                <div className="font-semibold">{t(serverIssue === "old" ? "auth.serverOldTitle" : "auth.serverDownTitle")}</div>
+                <div className="mt-1 text-fg-2">
+                  {t(serverIssue === "old" ? "auth.serverOldText" : "auth.serverDownText", { host: (serverBase() || location.origin).replace(/^https?:\/\//, "") })}
+                </div>
+              </div>
+            )}
             {invite && <InviteBanner invite={invite} />}
             <AnimatePresence mode="wait" initial={false}>
               <motion.div key={needServer ? "server" : mode} initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -12 }} transition={{ duration: 0.18 }}>

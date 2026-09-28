@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { Permission, RelationshipType } from "@nova/shared";
 import { api } from "../../lib/api";
+import { webLink } from "../../lib/server";
 import { errorText, t } from "../../lib/i18n";
 import { toast } from "../../lib/bus";
 import type { MenuEntry } from "../../components/ui/overlay";
@@ -85,7 +86,7 @@ export function channelMenu(channelId: string): MenuEntry[] {
   const bits = channelPerms(s, channelId);
   const muted = isMuted(s, channelId, c.guildId);
   const manage = can(bits, Permission.MANAGE_CHANNELS);
-  const link = `${location.origin}${location.pathname}#/channels/${c.guildId ?? "@me"}/${channelId}`;
+  const link = webLink(`/#/channels/${c.guildId ?? "@me"}/${channelId}`);
   return [
     c.type !== "voice" && c.type !== "category" && { label: t("guild.markRead"), icon: <Check size={16} />, onSelect: () => void run(api(`/api/channels/${channelId}/ack`, { method: "POST", body: {} })) },
     c.type === "voice" && { label: t("voice.joinChannel"), icon: <Volume2 size={16} />, onSelect: () => void joinVoice(channelId) },

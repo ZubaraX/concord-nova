@@ -61,6 +61,15 @@ export function apiUrl(path: string): string {
   return serverBase() + (path.startsWith("/") ? path : `/${path}`);
 }
 
+/**
+ * Shareable web link (invites, channel/message links). Apps must not use their
+ * own origin — that's app://nova or https://localhost on Android.
+ */
+export function webLink(path: string): string {
+  const base = (serverBase() || location.origin).replace(/\/+$/, "");
+  return base + (path.startsWith("/") ? path : `/${path}`);
+}
+
 /** Absolute URL for server-hosted media, optionally a resized image variant. */
 export function mediaUrl(path: string | null | undefined, width?: number): string | undefined {
   if (!path) return undefined;

@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { MessageFlags, MessageType, Permission, RelationshipType, type MessageDTO } from "@nova/shared";
 import { api } from "../../lib/api";
+import { webLink } from "../../lib/server";
 import { errorText, t } from "../../lib/i18n";
 import { toast } from "../../lib/bus";
 import { fmtDateTime, fmtDuration, fmtMessageTime, fmtTime } from "../../lib/time";
@@ -387,7 +388,7 @@ export function messageMenu(m: MessageDTO, me: string): MenuEntry[] {
   const own = m.author.id === me;
   const mod = !!m.guildId && can(bits, Permission.MANAGE_MESSAGES);
   const canPin = m.guildId ? mod : true;
-  const link = `${location.origin}${location.pathname}#/channels/${m.guildId ?? "@me"}/${m.channelId}/${m.id}`;
+  const link = webLink(`/#/channels/${m.guildId ?? "@me"}/${m.channelId}/${m.id}`);
   const copy = (v: string) => {
     void navigator.clipboard?.writeText(v);
     toast(t("common.copied"), "success");
