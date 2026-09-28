@@ -196,7 +196,8 @@ export function ChannelView({ channelId }: { channelId: string }) {
     <div className="flex min-w-0 flex-1 flex-col">
       <Header channelId={channelId} />
       {privateCall && (
-        <div className="h-[46%] min-h-[240px] shrink-0 border-b border-line/8 bg-canvas/60">
+        // flex: the stage sizes its tiles from the room it gets here.
+        <div className="flex h-[46%] min-h-[240px] shrink-0 border-b border-line/8 bg-canvas/60">
           <VoiceStage channelId={channelId} compact />
         </div>
       )}

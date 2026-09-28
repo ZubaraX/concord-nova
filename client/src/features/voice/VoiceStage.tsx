@@ -53,7 +53,8 @@ function TrackVideo({ track, mirror, contain }: { track: Track; mirror?: boolean
 interface TileSpec {
   key: string;
   userId: string;
-  source: "camera" | "screen" | "avatar";
+  /** ringing: a DM call recipient who hasn't answered yet. */
+  source: "camera" | "screen" | "avatar" | "ringing";
 }
 
 const Tile = memo(function Tile({ spec, focused, small, onFocus, guildId }: { spec: TileSpec; focused?: boolean; small?: boolean; onFocus: () => void; guildId: string | null }) {
@@ -64,9 +65,10 @@ const Tile = memo(function Tile({ spec, focused, small, onFocus, guildId }: { sp
   const quality = useVoice((s) => s.quality[spec.userId]);
   const auraRef = useRef<HTMLDivElement>(null);
   const tileRef = useRef<HTMLDivElement>(null);
-  useAura(spec.source === "screen" ? { current: null } : spec.source === "camera" ? tileRef : auraRef, spec.userId, me, spec.source !== "screen");
+  const ringing = spec.source === "ringing";
+  useAura(spec.source === "screen" || ringing ? { current: null } : spec.source === "camera" ? tileRef : auraRef, spec.userId, me, spec.source !== "screen" && !ringing);
   const menu = useContextMenu();
-  const track = spec.source !== "avatar" ? trackFor(spec.userId, spec.source) : undefined;
+  const track = spec.source === "camera" || spec.source === "screen" ? trackFor(spec.userId, spec.source) : undefined;
   const muted = vs?.selfMute || vs?.serverMute;
   const deaf = vs?.selfDeaf || vs?.serverDeaf;
 
@@ -82,7 +84,8 @@ const Tile = memo(function Tile({ spec, focused, small, onFocus, guildId }: { sp
         small && "cursor-pointer"
       )}
       data-speaking="false"
-      data-user={spec.userId}
+      data-user={ringing ? undefined : spec.userId}
+      data-ringing={ringing ? spec.userId : undefined}
       data-source={spec.source}
       style={{ transition: "box-shadow 90ms linear" }}
     >
@@ -91,7 +94,7 @@ const Tile = memo(function Tile({ spec, focused, small, onFocus, guildId }: { sp
       ) : (
         <>
           <div className="absolute inset-0 opacity-60" style={{ background: "radial-gradient(60% 60% at 50% 45%, rgb(var(--star) / 0.10), transparent 70%)" }} />
-          <div ref={auraRef} className="aura relative rounded-full" data-speaking="false">
+          <div ref={auraRef} className={clsx("relative rounded-full", ringing ? "animate-pulse opacity-70" : "aura")} data-speaking="false">
             <UserAvatar userId={spec.userId} size={small ? 44 : focused ? 128 : 84} showStatus={false} />
           </div>
         </>
@@ -102,7 +105,8 @@ const Tile = memo(function Tile({ spec, focused, small, onFocus, guildId }: { sp
       <div className="absolute bottom-2 left-2 flex max-w-[calc(100%-1rem)] items-center gap-1.5 rounded-lg bg-canvas/75 px-2 py-1 text-[12.5px] font-semibold backdrop-blur">
         {spec.source === "screen" && <MonitorUp size={13} className="shrink-0 text-star" />}
         <span className="truncate">{name}</span>
-        {spec.source !== "screen" && muted && <MicOff size={13} className={clsx("shrink-0", vs?.serverMute ? "text-bad" : "text-fg-2")} />}
+        {ringing && <span className="shrink-0 font-medium text-fg-3">· {t("call.calling")}</span>}
+        {spec.source !== "screen" && muted &&<MicOff size={13} className={clsx("shrink-0", vs?.serverMute ? "text-bad" : "text-fg-2")} />}
         {spec.source !== "screen" && deaf && <HeadphoneOff size={13} className="shrink-0 text-fg-2" />}
       </div>
       {quality === "poor" || quality === "lost" ? (
@@ -151,6 +155,8 @@ function useSize() {
 }
 
 // ── stage ────────────────────────────────────────────────────────────────────
+const NOBODY: string[] = [];
+
 export function VoiceStage({ channelId, compact, onToggleChat, chatOpen }: { channelId: string; compact?: boolean; onToggleChat?: () => void; chatOpen?: boolean }) {
   const connected = useVoice((s) => s.channelId === channelId);
   const state = useVoice((s) => s.state);
@@ -158,6 +164,7 @@ export function VoiceStage({ channelId, compact, onToggleChat, chatOpen }: { cha
   const focus = useVoice((s) => s.focus);
   const reactions = useVoice((s) => s.reactions);
   const members = useData(useShallow((s) => voiceMembers(s, channelId)));
+  const ringing = useData(useShallow((s) => s.calls[channelId]?.ringing ?? NOBODY));
   const channel = useData((s) => s.channels[channelId]);
   const title = useData((s) => channelTitle(s, channel));
   const guildId = channel?.guildId ?? null;
@@ -177,9 +184,11 @@ export function VoiceStage({ channelId, compact, onToggleChat, chatOpen }: { cha
       out.push({ key: `${m.userId}:cam`, userId: m.userId, source: connected && trackFor(m.userId, "camera") ? "camera" : "avatar" });
       if (connected && (m.selfStream || trackFor(m.userId, "screen"))) out.push({ key: `${m.userId}:screen`, userId: m.userId, source: "screen" });
     }
+    // A DM call being placed shows who is being called, not just yourself.
+    for (const userId of ringing) if (!members.some((m) => m.userId === userId)) out.push({ key: `${userId}:ring`, userId, source: "ringing" });
     return out;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [members, connected, rev]);
+  }, [members, ringing, connected, rev]);
 
   if (!connected) {
     return (
@@ -210,7 +219,8 @@ export function VoiceStage({ channelId, compact, onToggleChat, chatOpen }: { cha
 
   return (
     <div ref={root} className="relative flex min-h-0 min-w-0 flex-1 flex-col bg-canvas/40">
-      <div ref={area} className={clsx("relative min-h-0 flex-1", compact ? "p-2" : "p-4 pb-24")}>
+      {/* The bottom padding keeps tiles clear of the floating controls. */}
+      <div ref={area} className={clsx("relative min-h-0 flex-1", compact ? "p-2 pb-[76px]" : "p-4 pb-24")}>
         {focused ? (
           <div className="flex h-full flex-col gap-2.5">
             <div className="min-h-0 flex-1">

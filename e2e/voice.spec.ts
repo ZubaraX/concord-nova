@@ -77,13 +77,24 @@ test("DM call: ring, answer, hang up, call log line", async ({ browser, request 
   const b = await openAs(browser, bob, "/#/channels/@me");
 
   await a.page.getByRole("button", { name: "Позвонить" }).first().click();
+  // While it rings, the caller sees who is being called.
+  await expect(a.page.locator(`[data-ringing="${bob.id}"]`)).toContainText("Звоним");
   await expect(b.page.getByText("Входящий звонок")).toBeVisible();
   await b.page.getByRole("button", { name: "Ответить", exact: true }).click();
+  await expect(a.page.locator(`[data-ringing="${bob.id}"]`)).toHaveCount(0);
 
   for (const s of [a, b]) {
     await expect(s.page.locator(`[data-user="${alice.id}"]`)).toBeVisible();
     await expect(s.page.locator(`[data-user="${bob.id}"]`)).toBeVisible();
+    // The call panel above the chat really has room: tiles are visible and the
+    // controls sit inside it, below the channel header (they once collapsed onto it).
+    await expect.poll(async () => (await s.page.locator(`[data-user="${bob.id}"]`).boundingBox())?.height ?? 0).toBeGreaterThan(80);
+    const header = (await s.page.locator("header").first().boundingBox())!;
+    const controls = (await s.page.getByRole("button", { name: "Отключиться" }).last().boundingBox())!;
+    expect(controls.y, "call controls below the header").toBeGreaterThan(header.y + header.height);
   }
+  // Already in the call: the call line in the chat doesn't offer to join it.
+  await expect(a.page.getByRole("button", { name: "Присоединиться" })).toHaveCount(0);
   await a.page.getByRole("button", { name: "Отключиться" }).first().click();
   await b.page.getByRole("button", { name: "Отключиться" }).first().click();
   await expect(messageRow(a.page, "Звонок")).toBeVisible();

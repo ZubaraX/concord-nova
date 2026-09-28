@@ -38,7 +38,7 @@ import { Markdown, toPlain } from "./markdown";
 import { Attachments, Embeds, Poll, Reactions, ThreadChip, toggleReaction, ReactionEmoji } from "./MessageParts";
 import { EmojiPicker } from "./EmojiPicker";
 import { tokensToText, textToTokens } from "./mentionText";
-import { joinVoice } from "../voice/voice";
+import { joinVoice, useVoice } from "../voice/voice";
 
 const QUICK = ["👍", "❤️", "😂"];
 
@@ -98,6 +98,7 @@ function SystemRow({ m }: { m: MessageDTO }) {
   const name = useData((s) => displayName(s, m.author.id, m.guildId));
   const time = fmtMessageTime(m.createdAt);
   const inCall = useData((s) => !!s.calls[m.channelId]);
+  const joined = useVoice((s) => s.channelId === m.channelId);
   let icon = <UserPlus size={16} className="text-ok" />;
   let body: React.ReactNode = null;
   switch (m.type) {
@@ -127,7 +128,7 @@ function SystemRow({ m }: { m: MessageDTO }) {
       body = ongoing ? (
         <>
           {t("chat.system.callStarted", { name })}
-          {inCall && (
+          {inCall && !joined && (
             <button onClick={() => void joinVoice(m.channelId)} className="ml-2 rounded-lg bg-ok px-2.5 py-0.5 text-[13px] font-semibold text-[#04150d]">
               {t("chat.system.joinCall")}
             </button>
