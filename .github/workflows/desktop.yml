@@ -28,9 +28,20 @@ jobs:
         run: npx vite build && node electron/build.mjs
       - name: Package
         working-directory: client
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --win --publish ${{ startsWith(github.ref, 'refs/tags/') && 'always' || 'never' }}
+        run: npx electron-builder --win --publish never
+      # One step uploads everything: electron-builder's own publishing races its
+      # parallel uploads and can split them over two releases with the same tag.
+      - name: Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Concord Nova ${{ github.ref_name }}
+          make_latest: true
+          body: Установщик для Windows — ConcordNova-Setup-*.exe. Уже установленная программа обновится сама.
+          files: |
+            client/release/ConcordNova-Setup-*.exe
+            client/release/ConcordNova-Setup-*.exe.blockmap
+            client/release/latest.yml
       - uses: actions/upload-artifact@v4
         with:
           name: ConcordNova-Setup
