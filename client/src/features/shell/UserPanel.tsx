@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import clsx from "clsx";
-import { Headphones, HeadphoneOff, Mic, MicOff, Settings, PhoneOff, Video, VideoOff, MonitorUp, MonitorX, Signal, AudioLines } from "lucide-react";
+import { Headphones, HeadphoneOff, Mic, MicOff, Settings, PhoneOff, Video, VideoOff, MonitorUp, MonitorX, AudioLines } from "lucide-react";
 import { api } from "../../lib/api";
 import { t } from "../../lib/i18n";
 import { fmtClock } from "../../lib/time";
@@ -11,10 +11,10 @@ import { useSettings } from "../../store/settings";
 import { IconButton } from "../../components/ui/primitives";
 import { MenuList, Popover, Tooltip, usePopover } from "../../components/ui/overlay";
 import { UserAvatar, StatusDot } from "../../components/ui/avatar";
-import { leaveVoice, toggleCamera, toggleDeafen, toggleMute, toggleScreen, useVoice, type Quality } from "../voice/voice";
+import { leaveVoice, toggleCamera, toggleDeafen, toggleMute, toggleScreen, useVoice } from "../voice/voice";
+import { PingButton } from "../voice/ConnectionStats";
+import { usePing } from "../voice/stats";
 import type { ChosenStatus } from "@nova/shared";
-
-const QUALITY_COLOR: Record<Quality, string> = { excellent: "text-ok", good: "text-ok", poor: "text-warn", lost: "text-bad", unknown: "text-fg-3" };
 
 function CallTimer({ since }: { since: number }) {
   const [now, setNow] = useState(Date.now());
@@ -30,16 +30,13 @@ export function VoicePanel() {
   const channel = useData((s) => (v.channelId ? s.channels[v.channelId] : undefined));
   const title = useData((s) => channelTitle(s, channel));
   const guildName = useData((s) => (channel?.guildId ? s.guilds[channel.guildId]?.name : null));
-  const me = useData((s) => s.me?.id);
+  const ping = usePing();
   if (!v.channelId || !channel) return null;
-  const q = (me && v.quality[me]) || "unknown";
   const label = v.state === "connected" ? t("voice.connected") : v.state === "reconnecting" ? t("voice.reconnecting") : v.state === "failed" ? t("voice.failed") : t("voice.connecting");
   return (
     <div className="border-b border-line/10 px-2.5 pb-2 pt-2.5">
       <div className="flex items-center gap-2">
-        <Tooltip content={`${t("voice.quality")}: ${q}`}>
-          <Signal size={18} className={clsx("shrink-0", v.state === "connected" ? QUALITY_COLOR[q] : "text-warn")} />
-        </Tooltip>
+        <PingButton className="-m-1 p-1" />
         <button onClick={() => navigate(channel.guildId ?? "@me", channel.id)} className="min-w-0 flex-1 text-left">
           <div className={clsx("text-[13.5px] font-semibold leading-tight", v.state === "connected" ? "text-ok" : "text-warn")}>{label}</div>
           <div className="truncate text-[12px] leading-tight text-fg-3 hover:underline">
@@ -51,6 +48,7 @@ export function VoicePanel() {
                 <CallTimer since={v.joinedAt} />
               </>
             )}
+            {ping != null && v.state === "connected" && <span className="tabular-nums">{` · ${t("voice.stats.ms", { n: ping })}`}</span>}
           </div>
         </button>
         <IconButton label={t("voice.disconnect")} onClick={() => void leaveVoice()} className="hover:!bg-bad/15 hover:!text-bad">

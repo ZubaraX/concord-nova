@@ -59,6 +59,20 @@ test("voice channel: join, hear each other in both ears, see mute", async ({ bro
   expect(probe.found, "no remote audio element").toBeGreaterThan(0);
   if (probe.channels >= 2) expect(probe.right, JSON.stringify(probe)).toBeGreaterThan(probe.left * 0.25);
 
+  // Connection info: live latency, a one-minute chart with a hover readout.
+  await b.page.getByRole("button", { name: "Сведения о подключении" }).last().click();
+  const info = b.page.locator("[data-connection-stats]");
+  await expect(info).toContainText(/Задержка\s*\d+ мс/, { timeout: 15_000 });
+  const chart = info.getByRole("img");
+  await expect(chart).toBeVisible();
+  const cb = (await chart.boundingBox())!;
+  await b.page.mouse.move(cb.x + cb.width - 20, cb.y + cb.height / 2);
+  await expect(info).toContainText(/\d+ мс · (сейчас|\d+ с назад)/);
+  await info.getByRole("button", { name: "Потери" }).click();
+  await expect(info).toContainText("Потери пакетов за минуту");
+  await b.page.keyboard.press("Escape");
+  await expect(info).toHaveCount(0);
+
   // Alice mutes → Bob sees the crossed-out mic on her tile.
   await a.page.getByRole("button", { name: "Выключить микрофон" }).first().click();
   await expect(b.page.locator(`[data-user="${alice.id}"] svg.lucide-mic-off`)).toBeVisible();

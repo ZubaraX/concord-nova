@@ -33,6 +33,7 @@ import { Popover, Tooltip, useContextMenu, usePopover, MenuList } from "../../co
 import { Slider } from "../../components/ui/primitives";
 import { UserAvatar } from "../../components/ui/avatar";
 import { userMenu } from "../shell/menus";
+import { PingButton } from "./ConnectionStats";
 import { flipCamera, isLocal, joinVoice, leaveVoice, sendReaction, toggleCamera, toggleDeafen, toggleMute, toggleScreen, trackFor, useVoice } from "./voice";
 import { useAura } from "./levels";
 
@@ -255,6 +256,7 @@ export function VoiceStage({ channelId, compact, onToggleChat, chatOpen }: { cha
             </AnimatePresence>
           </div>
         )}
+        <PingButton compact placement="bottom-start" className={clsx("absolute z-10 bg-canvas/75 px-2 py-1 backdrop-blur", compact ? "left-3 top-3" : "left-5 top-5")} />
         <div className="pointer-events-none absolute inset-0 overflow-hidden">
           {reactions.map((r) => (
             <span key={r.id} className="absolute bottom-16 text-[34px]" style={{ left: `${r.x}%`, animation: "float-up 3s cubic-bezier(.2,.7,.3,1) forwards", ["--drift" as string]: `${(r.x - 50) / 3}px` }}>
