@@ -25,6 +25,12 @@ if (location.hash.startsWith("#overlay")) {
   document.body.style.background = "transparent";
   root.render(<Overlay />);
 } else {
+  // Desktop: full-window layers (settings, modals, lightbox, calls) start below
+  // our own title bar, so the window can always be dragged, minimized, closed.
+  if (window.nova) {
+    document.documentElement.classList.add("desktop-app");
+    document.documentElement.style.setProperty("--chrome-top", "32px");
+  }
   root.render(
     <StrictMode>
       <App />

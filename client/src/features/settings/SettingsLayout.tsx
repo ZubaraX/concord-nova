@@ -62,7 +62,7 @@ export function SettingsLayout({
   return createPortal(
     <motion.div
       data-settings
-      className="fixed inset-0 z-[55] flex bg-surface"
+      className="app-layer z-[55] flex bg-surface"
       initial={{ opacity: 0, scale: 1.02 }}
       animate={{ opacity: 1, scale: 1 }}
       transition={{ duration: 0.18 }}
@@ -79,7 +79,8 @@ export function SettingsLayout({
           </div>
         ) : (
           <div className="flex min-w-0 flex-1 flex-col">
-            <div className="flex h-12 items-center justify-end border-b border-line/10 px-2">
+            <div className="flex h-12 items-center justify-between border-b border-line/10 pl-4 pr-2">
+              <span className="font-display text-[17px] font-semibold">{t("settings.title")}</span>
               <button onClick={onClose} className="rounded-lg p-2 text-fg-2" aria-label={t("common.close")}>
                 <X size={22} />
               </button>

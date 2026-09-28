@@ -30,7 +30,7 @@ export function Toasts() {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -8, scale: 0.98 }}
             transition={{ type: "spring", stiffness: 500, damping: 34 }}
-            className="glass pointer-events-auto flex max-w-md items-center gap-3 rounded-xl px-4 py-3 text-[14px] shadow-lift"
+            className="menu-surface pointer-events-auto flex max-w-md items-center gap-3 rounded-xl px-4 py-3 text-[14px] shadow-lift"
           >
             {t.kind === "error" ? <AlertTriangle size={18} className="shrink-0 text-bad" /> : t.kind === "success" ? <CheckCircle2 size={18} className="shrink-0 text-ok" /> : <Info size={18} className="shrink-0 text-star" />}
             <span className="min-w-0 flex-1">{t.text}</span>

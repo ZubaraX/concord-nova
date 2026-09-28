@@ -41,7 +41,7 @@ export function Modal({
     <AnimatePresence>
       {open && (
         <motion.div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          className="app-layer z-50 flex items-center justify-center p-4"
           initial={{ opacity: 0 }}
           animate={{ opacity: 1 }}
           exit={{ opacity: 0 }}
@@ -194,7 +194,10 @@ export function usePopover() {
     setAnchor("currentTarget" in e ? e.currentTarget.getBoundingClientRect() : e);
   }, []);
   const toggle = useCallback((e: { currentTarget: Element }) => {
-    setAnchor((a) => (a ? null : e.currentTarget.getBoundingClientRect()));
+    // Measure now: React may run the updater after the event is done, when
+    // currentTarget is already null (that crashed the composer's emoji button).
+    const rect = e.currentTarget.getBoundingClientRect();
+    setAnchor((a) => (a ? null : rect));
   }, []);
   const close = useCallback(() => setAnchor(null), []);
   return { anchor, open, toggle, close };
@@ -231,7 +234,7 @@ export function MenuList({ items, onClose, className }: { items: MenuEntry[]; on
     }
   };
   return (
-    <div role="menu" onKeyDown={onKey} className={clsx("glass min-w-[200px] max-w-[300px] rounded-xl p-1.5 shadow-lift", className)}>
+    <div role="menu" onKeyDown={onKey} className={clsx("menu-surface min-w-[200px] max-w-[300px] rounded-xl p-1.5 shadow-lift", className)}>
       {list.map((it, i) =>
         it.separator ? (
           <div key={i} className="mx-2 my-1 h-px bg-line/10" />

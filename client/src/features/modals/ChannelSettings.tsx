@@ -8,7 +8,7 @@ import { toast } from "../../lib/bus";
 import { displayName, useData } from "../../store/data";
 import { confirmDialog } from "../../store/ui";
 import { Modal } from "../../components/ui/overlay";
-import { Button, Input, Textarea, Field } from "../../components/ui/primitives";
+import { Button, Input, Textarea, Field, Slider } from "../../components/ui/primitives";
 import { MenuList, Popover, usePopover } from "../../components/ui/overlay";
 import { UserAvatar } from "../../components/ui/avatar";
 
@@ -115,17 +115,24 @@ function Overview({ c }: { c: ChannelDTO }) {
           <Input label={t("channel.name")} value={name} onChange={(e) => setName(e.target.value)} maxLength={100} />
           {c.type !== "category" && c.type !== "voice" && <Textarea label={t("channel.topic")} placeholder={t("channel.topicPlaceholder")} value={topic} onChange={(e) => setTopic(e.target.value)} maxLength={1024} />}
           {c.type !== "category" && (
-            <Field label={t("channel.slowmode")} hint={slowmode ? `${slowmode} с` : t("channel.slowmodeOff")}>
-              <input type="range" min={0} max={SLOW.length - 1} value={Math.max(0, SLOW.indexOf(slowmode))} onChange={(e) => setSlowmode(SLOW[Number(e.target.value)])} className="accent-[rgb(var(--star))]" />
+            <Field label={t("channel.slowmode")}>
+              <Slider
+                min={0}
+                max={SLOW.length - 1}
+                value={Math.max(0, SLOW.indexOf(slowmode))}
+                onChange={(i) => setSlowmode(SLOW[i])}
+                format={(i) => (SLOW[i] ? t("time.seconds", { n: SLOW[i] }) : t("channel.slowmodeOff"))}
+                className="[&>span]:w-24"
+              />
             </Field>
           )}
           {c.type === "voice" && (
             <>
-              <Field label={t("channel.userLimit")} hint={limit ? String(limit) : t("channel.unlimited")}>
-                <input type="range" min={0} max={99} value={limit} onChange={(e) => setLimit(Number(e.target.value))} className="accent-[rgb(var(--star))]" />
+              <Field label={t("channel.userLimit")}>
+                <Slider min={0} max={99} value={limit} onChange={setLimit} format={(v) => (v ? String(v) : "∞")} />
               </Field>
-              <Field label={t("channel.bitrate")} hint={`${Math.round(bitrate / 1000)} kbps`}>
-                <input type="range" min={8000} max={510000} step={8000} value={bitrate} onChange={(e) => setBitrate(Number(e.target.value))} className="accent-[rgb(var(--star))]" />
+              <Field label={t("channel.bitrate")}>
+                <Slider min={8000} max={510000} step={8000} value={bitrate} onChange={setBitrate} format={(v) => `${Math.round(v / 1000)} kbps`} className="[&>span]:w-20" />
               </Field>
             </>
           )}

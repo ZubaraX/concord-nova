@@ -355,7 +355,7 @@ function Controls({
         </Tooltip>
       </div>
       <Popover anchor={react.anchor} onClose={react.close} placement="top">
-        <div className="glass flex gap-1 rounded-2xl p-2 shadow-lift">
+        <div className="menu-surface flex gap-1 rounded-2xl p-2 shadow-lift">
           {QUICK_REACTIONS.map((e) => (
             <button key={e} onClick={() => sendReaction(e)} className="flex h-11 w-11 items-center justify-center rounded-xl text-[26px] transition-transform hover:scale-125 hover:bg-raised">
               {e}

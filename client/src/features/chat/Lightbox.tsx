@@ -42,7 +42,7 @@ export function Lightbox() {
   return createPortal(
     <AnimatePresence>
       {box && item && (
-        <motion.div className="fixed inset-0 z-[85] flex items-center justify-center bg-[rgb(3_4_10/0.92)]" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onMouseDown={(e) => e.target === e.currentTarget && close()}>
+        <motion.div className="app-layer z-[85] flex items-center justify-center bg-[rgb(3_4_10/0.92)]" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} onMouseDown={(e) => e.target === e.currentTarget && close()}>
           <div className="absolute right-3 top-3 z-10 flex gap-1">
             <a href={item.url + (item.url.includes("?") ? "&" : "?") + "download=1"} download={item.name} className="rounded-xl p-2.5 text-white/80 hover:bg-white/10 hover:text-white" aria-label={t("common.download")}>
               <Download size={20} />

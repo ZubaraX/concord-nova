@@ -164,7 +164,7 @@ export function useSuggestions(trigger: Trigger | null, channelId: string, guild
 export function AutocompleteList({ items, index, onPick, onHover }: { items: Suggestion[]; index: number; onPick: (s: Suggestion) => void; onHover: (i: number) => void }) {
   if (!items.length) return null;
   return (
-    <div className="glass absolute inset-x-0 bottom-full mb-2 max-h-80 overflow-y-auto rounded-xl p-1.5 shadow-lift anim-pop" role="listbox">
+    <div className="menu-surface absolute inset-x-0 bottom-full mb-2 max-h-80 overflow-y-auto rounded-xl p-1.5 shadow-lift anim-pop" role="listbox">
       {items.map((it, i) => (
         <button
           key={it.key}

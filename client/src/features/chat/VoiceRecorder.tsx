@@ -6,6 +6,7 @@ import { t } from "../../lib/i18n";
 import { fmtClock } from "../../lib/time";
 import { toast } from "../../lib/bus";
 import { settings } from "../../store/settings";
+import { monoNode } from "../voice/processor";
 
 export async function computeWaveform(blob: Blob, points = 64): Promise<{ waveform: string; duration: number }> {
   const ctx = new AudioContext();
@@ -49,8 +50,16 @@ export function VoiceRecorder({ onDone, onCancel }: { onDone: (blob: Blob, durat
         toast(t("errors.microphone_denied"), "error");
         return onCancel();
       }
+      // Record a mono mix: a "stereo" mic with the voice on one side would
+      // otherwise produce one-ear voice messages.
+      ctx = new AudioContext();
+      const mono = monoNode(ctx);
+      const dest = ctx.createMediaStreamDestination();
+      dest.channelCount = 1;
+      ctx.createMediaStreamSource(stream).connect(mono);
+      mono.connect(dest);
       const mime = ["audio/ogg;codecs=opus", "audio/webm;codecs=opus", "audio/mp4"].find((m) => MediaRecorder.isTypeSupported(m)) ?? "";
-      const r = new MediaRecorder(stream, mime ? { mimeType: mime, audioBitsPerSecond: 48_000 } : undefined);
+      const r = new MediaRecorder(dest.stream, mime ? { mimeType: mime, audioBitsPerSecond: 48_000 } : undefined);
       rec.current = r;
       r.ondataavailable = (e) => e.data.size && chunks.current.push(e.data);
       r.onstop = async () => {
@@ -71,10 +80,9 @@ export function VoiceRecorder({ onDone, onCancel }: { onDone: (blob: Blob, durat
       };
       r.start(250);
       started.current = Date.now();
-      ctx = new AudioContext();
       const an = ctx.createAnalyser();
       an.fftSize = 256;
-      ctx.createMediaStreamSource(stream).connect(an);
+      mono.connect(an);
       const d = new Uint8Array(an.frequencyBinCount);
       let lastBar = 0;
       const loop = (ts: number) => {

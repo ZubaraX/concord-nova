@@ -107,7 +107,11 @@ export function applyRoute() {
   const guildId = m?.[1] ?? "@me";
   const channelId = m?.[2] ?? null;
   const cur = useUI.getState();
-  if (cur.guildId === guildId && cur.channelId === channelId) return;
+  if (cur.guildId === guildId && cur.channelId === channelId) {
+    // Tapping the open channel on a phone still has to bring the chat back.
+    if (channelId && cur.mobilePane !== "chat") useUI.setState({ mobilePane: "chat" });
+    return;
+  }
   useUI.setState({
     guildId,
     channelId,

@@ -24,6 +24,21 @@ async function rnnoiseNode(ctx: AudioContext): Promise<AudioNode> {
   return new mod.RnnoiseWorkletNode(ctx, { maxChannels: 1, wasmBinary: await rnnoiseWasm });
 }
 
+/**
+ * Mono fold-down. Many Windows mics/headsets deliver two channels even when
+ * asked for one — often with the voice on the left only. Without this, RNNoise
+ * (which processes one channel) and the stereo destination produce a track with
+ * a silent right channel: everyone hears you in one ear. Folding to mono up
+ * front keeps every stage and the published track centred.
+ */
+export function monoNode(ctx: BaseAudioContext): GainNode {
+  const g = ctx.createGain();
+  g.channelCount = 1;
+  g.channelCountMode = "explicit";
+  g.channelInterpretation = "speakers";
+  return g;
+}
+
 export interface GateState {
   muted: boolean;
   pttDown: boolean;
@@ -72,8 +87,10 @@ export class MicProcessor implements TrackProcessor<Track.Kind.Audio, AudioProce
     const ctx = new AudioContext({ sampleRate: 48_000, latencyHint: "interactive" });
     this.ctx = ctx;
     const src = ctx.createMediaStreamSource(new MediaStream([track]));
-    let head: AudioNode = src;
-    this.nodes = [src];
+    const mono = monoNode(ctx);
+    src.connect(mono);
+    let head: AudioNode = mono;
+    this.nodes = [src, mono];
     if (settings().noise === "rnnoise") {
       try {
         const rn = await rnnoiseNode(ctx);
@@ -92,6 +109,7 @@ export class MicProcessor implements TrackProcessor<Track.Kind.Audio, AudioProce
     const gate = ctx.createGain();
     gate.gain.value = 0;
     const dest = ctx.createMediaStreamDestination();
+    dest.channelCount = 1; // a mono track: receivers play it in both ears
     head.connect(input);
     input.connect(analyser);
     input.connect(gate);

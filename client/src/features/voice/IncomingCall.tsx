@@ -55,7 +55,7 @@ export function IncomingCall() {
   return (
     <AnimatePresence>
       {ringing && call && caller && (
-        <motion.div className="fixed inset-0 z-[75] flex items-center justify-center bg-[rgb(4_5_12/0.6)] p-4 backdrop-blur-sm" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
+        <motion.div className="app-layer z-[75] flex items-center justify-center bg-[rgb(4_5_12/0.6)] p-4 backdrop-blur-sm" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
           <motion.div
             initial={{ scale: 0.85, y: 24, opacity: 0 }}
             animate={{ scale: 1, y: 0, opacity: 1 }}

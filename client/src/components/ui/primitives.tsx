@@ -170,8 +170,9 @@ export function Switch({ checked, onChange, disabled, label }: { checked: boolea
 
 export function SettingRow({ title, hint, children, className }: { title: ReactNode; hint?: ReactNode; children: ReactNode; className?: string }) {
   return (
-    <div className={clsx("flex items-center justify-between gap-6 py-3", className)}>
-      <div className="min-w-0">
+    // Wraps on narrow screens: the control drops below its label instead of covering it.
+    <div className={clsx("flex flex-wrap items-center justify-between gap-x-6 gap-y-2 py-3", className)}>
+      <div className="min-w-0 flex-1 basis-40">
         <div className="text-[15px] font-medium text-fg">{title}</div>
         {hint && <div className="mt-0.5 text-[13px] text-fg-3">{hint}</div>}
       </div>
@@ -200,24 +201,29 @@ export function Slider({
   /** Live level overlay 0..1 (mic meter). */
   marker?: number;
 }) {
-  const pct = ((value - min) / (max - min)) * 100;
+  const frac = Math.min(1, Math.max(0, (value - min) / (max - min)));
+  // The native thumb (16px) travels inside the input's width minus its own
+  // size, so fills end at the thumb's centre, not at a plain percentage.
+  const toThumb = (f: number) => `calc(${f} * (100% - 16px) + 8px)`;
   return (
-    <div className={clsx("relative flex h-6 items-center", className)}>
-      <div className="absolute inset-x-0 h-1.5 overflow-hidden rounded-full bg-overlay">
-        {marker !== undefined && <div className="absolute inset-y-0 left-0 bg-ok/60 transition-[width] duration-75" style={{ width: `${Math.min(100, marker * 100)}%` }} />}
-        <div className="absolute inset-y-0 left-0 rounded-full bg-star" style={{ width: `${pct}%`, opacity: marker !== undefined ? 0.35 : 1 }} />
+    <div className={clsx("flex h-6 items-center gap-3", className)}>
+      <div className="relative flex h-6 min-w-0 flex-1 items-center">
+        <div className="absolute inset-x-0 h-1.5 overflow-hidden rounded-full bg-overlay">
+          {marker !== undefined && <div className="absolute inset-y-0 left-0 bg-ok/60 transition-[width] duration-75" style={{ width: toThumb(Math.min(1, marker)) }} />}
+          <div className="absolute inset-y-0 left-0 rounded-full bg-star" style={{ width: toThumb(frac), opacity: marker !== undefined ? 0.35 : 1 }} />
+        </div>
+        <input
+          type="range"
+          min={min}
+          max={max}
+          step={step}
+          value={value}
+          onChange={(e) => onChange(Number(e.target.value))}
+          aria-valuetext={format?.(value)}
+          className="relative z-10 m-0 h-6 w-full cursor-pointer appearance-none bg-transparent [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow-[0_0_0_4px_rgb(var(--star)/0.35)]"
+        />
       </div>
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        onChange={(e) => onChange(Number(e.target.value))}
-        aria-valuetext={format?.(value)}
-        className="relative z-10 h-6 w-full cursor-pointer appearance-none bg-transparent [&::-webkit-slider-thumb]:h-4 [&::-webkit-slider-thumb]:w-4 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-white [&::-webkit-slider-thumb]:shadow-[0_0_0_4px_rgb(var(--star)/0.35)]"
-      />
-      {format && <span className="ml-3 w-14 shrink-0 text-right text-[13px] tabular-nums text-fg-2">{format(value)}</span>}
+      {format && <span className="w-12 shrink-0 text-right text-[13px] tabular-nums text-fg-2">{format(value)}</span>}
     </div>
   );
 }
@@ -232,13 +238,13 @@ export function Kbd({ children }: { children: ReactNode }) {
 
 export function Segmented<T extends string>({ value, options, onChange }: { value: T; options: { value: T; label: ReactNode }[]; onChange: (v: T) => void }) {
   return (
-    <div className="inline-flex rounded-[10px] bg-canvas/70 p-1 ring-1 ring-line/10">
+    <div className="inline-flex max-w-full overflow-x-auto rounded-[10px] bg-canvas/70 p-1 ring-1 ring-line/10 [scrollbar-width:none]">
       {options.map((o) => (
         <button
           key={o.value}
           onClick={() => onChange(o.value)}
           className={clsx(
-            "rounded-lg px-3 py-1.5 text-[13px] font-semibold transition-colors",
+            "shrink-0 whitespace-nowrap rounded-lg px-3 py-1.5 text-[13px] font-semibold transition-colors",
             o.value === value ? "bg-raised text-fg shadow-sm" : "text-fg-3 hover:text-fg"
           )}
         >

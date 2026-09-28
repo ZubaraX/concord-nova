@@ -25,7 +25,7 @@ const TONES = ["✋", "✋🏻", "✋🏼", "✋🏽", "✋🏾", "✋🏿"];
 export function EmojiPicker({ onPick, closeOnPick = true, onClose, tabs = ["emoji"], onGif }: { onPick: (e: PickedEmoji) => void; closeOnPick?: boolean; onClose?: () => void; tabs?: ("emoji" | "gif")[]; onGif?: (g: GifDTO) => void }) {
   const [tab, setTab] = useState<"emoji" | "gif">(tabs[0]);
   return (
-    <div className="glass flex h-[440px] w-[min(380px,calc(100vw-16px))] flex-col overflow-hidden rounded-2xl shadow-lift">
+    <div className="menu-surface flex h-[440px] w-[min(380px,calc(100vw-16px))] flex-col overflow-hidden rounded-2xl shadow-lift">
       {tabs.length > 1 && (
         <div className="flex gap-1 px-3 pt-3">
           {tabs.map((x) => (
