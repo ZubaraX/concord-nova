@@ -65,6 +65,9 @@ export function Composer({ channelId, placeholderOverride, compact }: { channelI
   const [recording, setRecording] = useState(false);
   const [replyPing, setReplyPing] = useState(true);
   const [slowUntil, setSlowUntil] = useState(0);
+  // Pressed send while files were still uploading: send as soon as they finish.
+  const [queued, setQueued] = useState<{ silent?: boolean } | null>(null);
+  const uploading = staged.some((s) => s.status === "uploading");
   const [now, setNow] = useState(Date.now());
   const ta = useRef<HTMLTextAreaElement>(null);
   const plus = usePopover();
@@ -153,7 +156,10 @@ export function Composer({ channelId, placeholderOverride, compact }: { channelI
       if (!canSend) return;
       if (Date.now() < slowUntil) return;
       const files = takeStaged(channelId);
-      if (!files) return toast(t("chat.uploading", { p: "…" }));
+      if (!files) {
+        setQueued(opts ?? {});
+        return;
+      }
       const raw = text.trim();
       if (!raw && !files.attachments.length) return;
       const s = data();
@@ -178,6 +184,14 @@ export function Composer({ channelId, placeholderOverride, compact }: { channelI
     },
     [canSend, slowUntil, channelId, text, guildId, replyTo, replyPing, channel?.slowmode, bits]
   );
+
+  useEffect(() => {
+    if (!queued || uploading) return;
+    const opts = queued;
+    setQueued(null);
+    void send(opts);
+  }, [queued, uploading, send]);
+  useEffect(() => setQueued(null), [channelId]);
 
   const sendGif = (g: GifDTO) => {
     if (!canSend) return;
@@ -263,8 +277,7 @@ export function Composer({ channelId, placeholderOverride, compact }: { channelI
       : t("chat.placeholderNoPerm")
     : placeholderOverride ?? (channel?.guildId ? t("chat.placeholderChannel", { name: title }) : t("chat.placeholderDm", { name: title }));
   const slowLeft = Math.max(0, Math.ceil((slowUntil - now) / 1000));
-  const uploading = staged.some((s) => s.status === "uploading");
-  const hasContent = !!text.trim() || staged.some((s) => s.status === "done");
+  const hasContent = !!text.trim() || staged.some((s) => s.status !== "error");
   const maxLen = useData((s) => s.server?.maxMessageLength ?? 20000);
 
   return (
@@ -334,7 +347,7 @@ export function Composer({ channelId, placeholderOverride, compact }: { channelI
           <VoiceRecorder onDone={onVoiceDone} onCancel={() => setRecording(false)} />
         ) : (
           <>
-            <button disabled={!canSend} onClick={plus.toggle} className="mb-1.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-fg-2 transition-colors hover:bg-overlay hover:text-fg disabled:opacity-40" aria-label={t("common.more")}>
+            <button disabled={!canSend} onClick={plus.toggle} className="mb-1.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-fg-2 transition-colors hover:bg-overlay hover:text-fg disabled:opacity-40" aria-label={t("chat.plusMenu")}>
               <Plus size={20} className={clsx("transition-transform", plus.anchor && "rotate-45")} />
             </button>
             <textarea
@@ -360,9 +373,14 @@ export function Composer({ channelId, placeholderOverride, compact }: { channelI
             </button>
             {hasContent || !can(bits, Permission.SEND_VOICE_MESSAGES) ? (
               <button
-                disabled={!canSend || !hasContent || uploading || slowLeft > 0}
+                disabled={!canSend || !hasContent || !!queued || slowLeft > 0}
                 onClick={() => void send()}
-                className={clsx("mb-1.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-all", hasContent && !uploading ? "star-fill scale-100" : "text-fg-3 opacity-50", !mobile && !hasContent && "hidden")}
+                className={clsx(
+                  "mb-1.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg transition-all",
+                  hasContent ? "star-fill scale-100" : "text-fg-3 opacity-50",
+                  queued && "animate-pulse",
+                  !mobile && !hasContent && "hidden"
+                )}
                 aria-label={t("common.send")}
               >
                 <Send size={16} />

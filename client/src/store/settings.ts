@@ -134,23 +134,43 @@ function syncedOf(s: SyncedSettings): SyncedSettings {
   return out as unknown as SyncedSettings;
 }
 
+// When the synced settings last changed on this device. Stored with them (as
+// `_ts`, locally and on the server) so a stale copy never overwrites a newer
+// one — e.g. READY arriving right after a change that hadn't been pushed yet.
+let changedAt = (() => {
+  try {
+    return Number(JSON.parse(localStorage.getItem(SYNC_KEY) ?? "{}")._ts) || 0;
+  } catch {
+    return 0;
+  }
+})();
+
+const payload = () => ({ ...syncedOf(useSettings.getState()), _ts: changedAt });
+
+function pushNow(keepalive = false) {
+  if (pushTimer) clearTimeout(pushTimer);
+  pushTimer = null;
+  void api("/api/users/@me/settings", { method: "PUT", body: payload(), keepalive }).catch(() => {});
+}
+
+// Closing the window within the debounce must not lose the last change.
+if (typeof window !== "undefined") window.addEventListener("pagehide", () => pushTimer && pushNow(true));
+
 export const useSettings = create<SettingsState>((set, get) => ({
   ...load(SYNC_KEY, SYNC_DEFAULTS),
   ...load(LOCAL_KEY, LOCAL_DEFAULTS),
   setSynced(p) {
     set(p);
-    const synced = syncedOf(get());
+    if (!suppressPush) changedAt = Date.now();
     try {
-      localStorage.setItem(SYNC_KEY, JSON.stringify(synced));
+      localStorage.setItem(SYNC_KEY, JSON.stringify({ ...syncedOf(get()), _ts: changedAt }));
     } catch {
       /* quota */
     }
     applyVisuals();
     if (suppressPush) return;
     if (pushTimer) clearTimeout(pushTimer);
-    pushTimer = setTimeout(() => {
-      void api("/api/users/@me/settings", { method: "PUT", body: syncedOf(get()) }).catch(() => {});
-    }, 800);
+    pushTimer = setTimeout(() => pushNow(), 800);
   },
   setLocal(p) {
     set(p);
@@ -163,12 +183,15 @@ export const useSettings = create<SettingsState>((set, get) => ({
     }
   },
   hydrateSynced(remote) {
-    if (!remote || !Object.keys(remote).length) {
-      // First login on this account: upload what this device has.
-      void api("/api/users/@me/settings", { method: "PUT", body: syncedOf(get()) }).catch(() => {});
+    const remoteAt = Number(remote?._ts) || 0;
+    // First login on this account, or this device changed something more
+    // recently than the server copy: this device wins and uploads its copy.
+    if (!remote || !Object.keys(remote).length || changedAt > remoteAt || pushTimer) {
+      pushNow();
       return;
     }
     suppressPush = true;
+    changedAt = remoteAt;
     const clean: Partial<SyncedSettings> = {};
     for (const k of Object.keys(SYNC_DEFAULTS) as (keyof SyncedSettings)[]) if (k in remote) (clean as Record<string, unknown>)[k] = remote[k];
     get().setSynced(clean);

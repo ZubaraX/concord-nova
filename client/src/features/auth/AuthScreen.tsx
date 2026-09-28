@@ -5,6 +5,7 @@ import { loginSchema, registerSchema, issuesToFields, type InviteDTO, type Serve
 import { api, ApiError } from "../../lib/api";
 import { errorText, t } from "../../lib/i18n";
 import { canChangeServer, hasServer, normalizeServer, serverBase, setServerBase } from "../../lib/server";
+import { pendingInvite } from "../../lib/deeplink";
 import { login, register } from "../../store/session";
 import { Button, Input } from "../../components/ui/primitives";
 import { NovaStar, Wordmark } from "../../components/Logo";
@@ -13,10 +14,6 @@ import { mediaUrl } from "../../lib/server";
 
 type Mode = "login" | "register" | "forgot" | "reset";
 
-const inviteFromUrl = (() => {
-  const m = /^#\/invite\/([\w-]+)/.exec(location.hash);
-  return m?.[1] ?? null;
-})();
 
 function fieldText(code: string | undefined): string | null {
   if (!code) return null;
@@ -25,6 +22,8 @@ function fieldText(code: string | undefined): string | null {
 }
 
 export function AuthScreen() {
+  // Captured by lib/deeplink (a /invite/CODE link) before the router rewrote the URL.
+  const [inviteFromUrl] = useState(pendingInvite);
   const [mode, setMode] = useState<Mode>(inviteFromUrl ? "register" : "login");
   const [needServer, setNeedServer] = useState(!hasServer());
   const [info, setInfo] = useState<ServerInfoDTO | null>(null);

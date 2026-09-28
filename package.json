@@ -26,9 +26,11 @@
     "android:release": "npm run android:release -w @nova/client",
     "icons": "node scripts/make-icons.mjs",
     "migrate:concord": "npm run migrate:concord -w @nova/server --",
-    "deploy": "node deploy/push.mjs"
+    "deploy": "node deploy/push.mjs",
+    "e2e": "playwright test -c e2e/playwright.config.ts"
   },
   "devDependencies": {
+    "@playwright/test": "~1.58.2",
     "concurrently": "^9.2.0"
   },
   "engines": {

@@ -82,6 +82,8 @@ const Tile = memo(function Tile({ spec, focused, small, onFocus, guildId }: { sp
         small && "cursor-pointer"
       )}
       data-speaking="false"
+      data-user={spec.userId}
+      data-source={spec.source}
       style={{ transition: "box-shadow 90ms linear" }}
     >
       {track ? (

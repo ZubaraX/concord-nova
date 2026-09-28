@@ -268,6 +268,7 @@ export const en: Dict = {
     threadNew: "New",
     threadsEmpty: "No threads yet.",
     threadDefault: "thread",
+    threadStart: "The start of this thread. Replies here keep the main channel tidy.",
   },
   chat: {
     placeholderChannel: "Message #{name}",
@@ -302,6 +303,7 @@ export const en: Dict = {
     pinned: "Pinned messages",
     noPins: "Nothing has been pinned in this channel yet.",
     attach: "Attach a file",
+    plusMenu: "Files and more",
     emoji: "Emoji",
     gif: "GIF",
     poll: "Poll",

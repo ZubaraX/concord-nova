@@ -6,6 +6,7 @@ import { ensureNotificationPermission, initNotifications } from "../../lib/notif
 import { isAndroid, isDesktop } from "../../lib/platform";
 import { initAndroidIntents, sharedFiles, startPush, type SharedContent } from "../../lib/android";
 import { t } from "../../lib/i18n";
+import { clearPendingInvite, pendingInvite } from "../../lib/deeplink";
 import { channelTitle, data, isUnread, useData } from "../../store/data";
 import { navigate, ui, useUI } from "../../store/ui";
 import { settings, useSettings } from "../../store/settings";
@@ -22,6 +23,13 @@ export function useGlobalEffects() {
       initNotifications();
     }
     const cleanups: (() => void)[] = [];
+
+    // Opened an invite link while logged out, then logged in: offer to join now.
+    const invite = pendingInvite();
+    if (invite) {
+      clearPendingInvite();
+      useUI.getState().setModal({ kind: "acceptInvite", code: invite });
+    }
 
     // Ask for notification permission on the first real interaction.
     const askOnce = () => {

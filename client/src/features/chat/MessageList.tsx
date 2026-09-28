@@ -77,8 +77,16 @@ function Welcome({ channelId }: { channelId: string }) {
       ) : (
         <div className="flex h-16 w-16 items-center justify-center rounded-full bg-raised text-fg-2">{channelIcon(c, 34)}</div>
       )}
-      <h2 className="mt-3 font-display text-[28px] font-semibold tracking-[-0.02em]">{c.guildId ? t("channel.welcome", { name: title }) : title}</h2>
-      <p className="mt-1 text-[15px] text-fg-2">{c.type === "dm" ? t("channel.dmStart", { name: title }) : c.type === "group_dm" ? t("channel.groupStart", { name: title }) : c.topic || t("channel.welcomeSub", { name: title })}</p>
+      <h2 className="mt-3 font-display text-[28px] font-semibold tracking-[-0.02em]">{c.type === "thread" ? title : c.guildId ? t("channel.welcome", { name: title }) : title}</h2>
+      <p className="mt-1 text-[15px] text-fg-2">
+        {c.type === "dm"
+          ? t("channel.dmStart", { name: title })
+          : c.type === "group_dm"
+            ? t("channel.groupStart", { name: title })
+            : c.type === "thread"
+              ? t("channel.threadStart")
+              : c.topic || t("channel.welcomeSub", { name: title })}
+      </p>
     </div>
   );
 }

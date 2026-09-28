@@ -25,3 +25,6 @@ server/.test-data/
 client/release/
 client/android/
 .playwright-mcp/
+
+# Playwright end-to-end runs
+.e2e-results/

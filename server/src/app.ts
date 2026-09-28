@@ -38,7 +38,9 @@ export async function buildApp(opts: { logger?: boolean | object } = {}): Promis
     global: true,
     max: 1200,
     timeWindow: "1 minute",
-    allowList: (req) => req.url.startsWith("/files/") || req.url.startsWith("/media-proxy") || req.url === "/health",
+    // Outside production, local traffic (tests, e2e, dev proxy) is never throttled.
+    allowList: (req) =>
+      req.url.startsWith("/files/") || req.url.startsWith("/media-proxy") || req.url === "/health" || (!config.isProd && /^(127.|::1$|::ffff:127.)/.test(req.ip)),
   });
   await app.register(multipart, { limits: { files: 1, fields: 10 } });
 

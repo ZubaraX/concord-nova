@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type { AuthResponse, RegisterInput } from "@nova/shared";
 import { api, onAuthLost, tokens } from "../lib/api";
 import { bus } from "../lib/bus";
+import { clearPendingInvite } from "../lib/deeplink";
 import { connectGateway, disconnectGateway } from "../lib/gateway";
 import { resetData } from "./data";
 import { resetMessages } from "./messages";
@@ -26,6 +27,8 @@ export async function login(loginValue: string, password: string) {
 
 export async function register(input: RegisterInput) {
   const res = await api<AuthResponse & { joinedGuildId: string | null }>("/api/auth/register", { method: "POST", body: input, auth: false });
+  // Joined through the invite as part of signing up — no "accept invite" dialog afterwards.
+  if (input.invite && res.joinedGuildId) clearPendingInvite();
   start(res);
   return res.joinedGuildId;
 }

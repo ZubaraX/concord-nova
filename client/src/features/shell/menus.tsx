@@ -4,6 +4,7 @@ import {
   BellOff,
   Check,
   Copy,
+  FolderPlus,
   Hash,
   LogOut,
   MessageSquare,
@@ -43,7 +44,12 @@ export function setMute(targetId: string, muted: boolean) {
   return run(api("/api/users/@me/notification-settings", { method: "PUT", body: { targetId, muted, muteUntil: null } }));
 }
 
-export function guildMenu(guildId: string): MenuEntry[] {
+/**
+ * Server actions. `header` is the dropdown under the server name (creation
+ * first, like Discord); otherwise the right-click menu of the server icon.
+ * Every entry is permission-gated, so members only see what they can do.
+ */
+export function guildMenu(guildId: string, opts: { header?: boolean } = {}): MenuEntry[] {
   const s = data();
   const g = s.guilds[guildId];
   if (!g) return [];
@@ -51,14 +57,19 @@ export function guildMenu(guildId: string): MenuEntry[] {
   const muted = isMuted(s, "", guildId);
   const owner = g.ownerId === s.me?.id;
   const manage = can(bits, Permission.MANAGE_GUILD) || can(bits, Permission.MANAGE_ROLES) || can(bits, Permission.MANAGE_CHANNELS) || can(bits, Permission.BAN_MEMBERS);
+  const channels = can(bits, Permission.MANAGE_CHANNELS);
+  const markRead: MenuEntry = { label: t("guild.markRead"), icon: <Check size={16} />, onSelect: () => void run(api(`/api/guilds/${guildId}/ack`, { method: "POST" })) };
+  const invite: MenuEntry = can(bits, Permission.CREATE_INSTANT_INVITE) && { label: t("guild.invitePeople"), icon: <UserPlus size={16} />, onSelect: () => ui().setModal({ kind: "invite", guildId }) };
+  const mute: MenuEntry = { label: muted ? t("channel.unmute") : t("channel.mute"), icon: muted ? <Bell size={16} /> : <BellOff size={16} />, onSelect: () => void setMute(guildId, !muted) };
+  const settingsItem: MenuEntry = manage && { label: t("guild.settings"), icon: <Settings size={16} />, onSelect: () => ui().setModal({ kind: "guildSettings", guildId }) };
+  const createChannel: MenuEntry = channels && { label: t("guild.createChannel"), icon: <Hash size={16} />, onSelect: () => ui().setModal({ kind: "createChannel", guildId }) };
+  const createCategory: MenuEntry = channels && { label: t("guild.createCategory"), icon: <FolderPlus size={16} />, onSelect: () => ui().setModal({ kind: "createChannel", guildId, type: "category" }) };
+  const copyId: MenuEntry = settings().developerMode && { label: t("chat.menu.copyId"), icon: <Copy size={16} />, onSelect: () => copy(guildId) };
+  const head: MenuEntry[] = opts.header
+    ? [invite, settingsItem, createChannel, createCategory, { separator: true }, mute, markRead, copyId]
+    : [markRead, { separator: true }, invite, mute, settingsItem, createChannel, copyId];
   return [
-    { label: t("guild.markRead"), icon: <Check size={16} />, onSelect: () => void run(api(`/api/guilds/${guildId}/ack`, { method: "POST" })) },
-    { separator: true },
-    can(bits, Permission.CREATE_INSTANT_INVITE) && { label: t("guild.invitePeople"), icon: <UserPlus size={16} />, onSelect: () => ui().setModal({ kind: "invite", guildId }) },
-    { label: muted ? t("channel.unmute") : t("channel.mute"), icon: muted ? <Bell size={16} /> : <BellOff size={16} />, onSelect: () => void setMute(guildId, !muted) },
-    manage && { label: t("guild.settings"), icon: <Settings size={16} />, onSelect: () => ui().setModal({ kind: "guildSettings", guildId }) },
-    can(bits, Permission.MANAGE_CHANNELS) && { label: t("guild.createChannel"), icon: <Hash size={16} />, onSelect: () => ui().setModal({ kind: "createChannel", guildId }) },
-    settings().developerMode && { label: t("chat.menu.copyId"), icon: <Copy size={16} />, onSelect: () => copy(guildId) },
+    ...head,
     !owner && { separator: true },
     !owner && {
       label: t("guild.leave"),

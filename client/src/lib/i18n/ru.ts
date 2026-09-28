@@ -266,6 +266,7 @@ export const ru = {
     threadNew: "Новая",
     threadsEmpty: "Веток пока нет.",
     threadDefault: "ветка",
+    threadStart: "Начало ветки. Ответы здесь не засоряют основной канал.",
   },
   chat: {
     placeholderChannel: "Написать в #{name}",
@@ -300,6 +301,7 @@ export const ru = {
     pinned: "Закреплённые сообщения",
     noPins: "В этом канале пока ничего не закрепили.",
     attach: "Прикрепить файл",
+    plusMenu: "Файлы и другое",
     emoji: "Эмодзи",
     gif: "GIF",
     poll: "Опрос",

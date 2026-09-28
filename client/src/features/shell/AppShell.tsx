@@ -70,7 +70,7 @@ export function AppShell() {
   const showRight = !!panel || (guildId !== "@me" && memberListOpen && wide);
 
   return (
-    <div className="flex h-full min-h-0" onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
+    <div className="flex h-full min-h-0" data-shell onTouchStart={onTouchStart} onTouchEnd={onTouchEnd}>
       {(!mobile || pane === "nav") && (
         <div className={clsx("flex min-h-0", mobile && "w-full")}>
           <ServerRail />

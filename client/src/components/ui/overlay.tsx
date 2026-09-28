@@ -219,8 +219,19 @@ export interface MenuItem {
 
 export type MenuEntry = MenuItem | false | null | undefined | "";
 
+/** Drop hidden entries, then separators at the edges or next to each other. */
+function tidy(items: MenuEntry[]): MenuItem[] {
+  const out: MenuItem[] = [];
+  for (const it of items.filter(Boolean) as MenuItem[]) {
+    if (it.separator && (!out.length || out[out.length - 1].separator)) continue;
+    out.push(it);
+  }
+  while (out.length && out[out.length - 1].separator) out.pop();
+  return out;
+}
+
 export function MenuList({ items, onClose, className }: { items: MenuEntry[]; onClose: () => void; className?: string }) {
-  const list = items.filter(Boolean) as MenuItem[];
+  const list = tidy(items);
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
   const onKey = (e: React.KeyboardEvent) => {
     const enabled = refs.current.filter((b): b is HTMLButtonElement => !!b && !b.disabled);

@@ -19,8 +19,7 @@ const getDummyHash = () => (dummyHash ??= hashPassword(randomBytes(16).toString(
 export async function authRoutes(app: FastifyInstance) {
   app.get("/info", async () => serverInfo());
 
-  // 10 sign-ups per IP and hour; the test suite registers more from one IP.
-  app.post("/register", { config: { rateLimit: { max: config.isTest ? 1000 : 10, timeWindow: "1 hour" } } }, async (req, reply) => {
+  app.post("/register", { config: { rateLimit: { max: 10, timeWindow: "1 hour" } } }, async (req, reply) => {
     const input = parse(registerSchema, req.body);
     const userCount = await prisma.user.count();
     const first = userCount === 0;

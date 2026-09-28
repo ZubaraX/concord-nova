@@ -1,3 +1,4 @@
+import "./lib/deeplink"; // first: reads the URL before any other module does
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
@@ -13,10 +14,6 @@ if (import.meta.env.DEV) {
     (window as unknown as Record<string, unknown>).__nova = { data: d.useData, messages: m.useMessages, ui: u.useUI, bus: b.bus };
   });
 }
-
-// Web deep link /invite/CODE (served by the SPA fallback) → hash route.
-const invite = /^\/invite\/([\w-]+)/.exec(location.pathname);
-if (invite) history.replaceState(null, "", `/#/invite/${invite[1]}`);
 
 const root = createRoot(document.getElementById("root")!);
 // The desktop "who's speaking" overlay window loads the same bundle with #overlay.

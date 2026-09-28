@@ -116,6 +116,8 @@ export interface RequestOptions {
   query?: Record<string, string | number | boolean | undefined | null>;
   signal?: AbortSignal;
   auth?: boolean;
+  /** Survives page unload (for last-moment saves). */
+  keepalive?: boolean;
 }
 
 function withQuery(path: string, q?: RequestOptions["query"]) {
@@ -140,12 +142,12 @@ async function toError(res: Response): Promise<ApiError> {
 let switchedOnce = false;
 
 export async function api<T = unknown>(path: string, opts: RequestOptions = {}): Promise<T> {
-  const { method = "GET", body, query, signal, auth = true } = opts;
+  const { method = "GET", body, query, signal, auth = true, keepalive } = opts;
   const doFetch = async (token: string | null) => {
     const headers: Record<string, string> = { "x-nova-platform": platform };
     if (body !== undefined) headers["content-type"] = "application/json";
     if (auth && token) headers.authorization = `Bearer ${token}`;
-    return fetch(apiUrl(withQuery(path, query)), { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined, signal });
+    return fetch(apiUrl(withQuery(path, query)), { method, headers, body: body !== undefined ? JSON.stringify(body) : undefined, signal, keepalive });
   };
 
   let token = auth ? await freshToken().catch(() => tokens.access) : null;

@@ -8,17 +8,13 @@ import {
   Megaphone,
   Volume2,
   Lock,
-  UserPlus,
   Settings,
   Plus,
   MicOff,
   HeadphoneOff,
   Video,
-
   CornerDownRight,
   BellOff,
-  FolderPlus,
-  Check,
 } from "lucide-react";
 import { Permission, type ChannelDTO } from "@nova/shared";
 import { api } from "../../lib/api";
@@ -115,15 +111,7 @@ export function GuildSidebar({ guildId }: { guildId: string }) {
         <MenuList
           className="w-[224px]"
           onClose={header.close}
-          items={[
-            can(bits, Permission.CREATE_INSTANT_INVITE) && { label: t("guild.invitePeople"), icon: <UserPlus size={16} />, onSelect: () => useUI.getState().setModal({ kind: "invite", guildId }) },
-            { label: t("guild.settings"), icon: <Settings size={16} />, onSelect: () => useUI.getState().setModal({ kind: "guildSettings", guildId }) },
-            manage && { label: t("guild.createChannel"), icon: <Plus size={16} />, onSelect: () => useUI.getState().setModal({ kind: "createChannel", guildId }) },
-            manage && { label: t("guild.createCategory"), icon: <FolderPlus size={16} />, onSelect: () => useUI.getState().setModal({ kind: "createChannel", guildId, type: "category" }) },
-            { separator: true },
-            { label: t("guild.markRead"), icon: <Check size={16} />, onSelect: () => void api(`/api/guilds/${guildId}/ack`, { method: "POST" }) },
-            ...guildMenu(guildId).slice(3),
-          ]}
+          items={guildMenu(guildId, { header: true })}
         />
       </Popover>
 
