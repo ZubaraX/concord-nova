@@ -74,7 +74,7 @@ export async function openAs(
   browser: Browser,
   user: User | null,
   path = "/",
-  opts: { viewport?: { width: number; height: number }; desktop?: boolean } = {}
+  opts: { viewport?: { width: number; height: number }; desktop?: boolean; /** Call the API on this address (cross-origin, like the desktop and Android apps). */ server?: string } = {}
 ): Promise<Session> {
   const context = await browser.newContext({
     baseURL: BASE,
@@ -95,6 +95,7 @@ export async function openAs(
     );
   }
   if (opts.desktop) await context.addInitScript(stubDesktopBridge);
+  if (opts.server) await context.addInitScript((url) => localStorage.setItem("nova.server", url), opts.server);
   const page = await context.newPage();
   const errors: string[] = [];
   page.on("pageerror", (e) => errors.push(`pageerror: ${e.message}`));

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { ru } from "./i18n/ru";
 import { en } from "./i18n/en";
 import { pluralIndex, t } from "./i18n";
-import { normalizeServer } from "./server";
+import { inviteCodeFromUrl, normalizeServer } from "./server";
 
 type Tree = { [k: string]: string | readonly string[] | Tree };
 const leaves = (o: Tree, p = ""): [string, string | readonly string[]][] =>
@@ -64,5 +64,16 @@ describe("server address", () => {
     expect(normalizeServer("localhost:4000")).toBe("http://localhost:4000");
     expect(normalizeServer("  https://x.io//  ")).toBe("https://x.io");
     expect(normalizeServer("")).toBe("");
+  });
+
+  it("recognizes invite links to this server (joined in the app, not in a browser)", () => {
+    const own = ["138-16-224-172.sslip.io", "138.16.224.172"];
+    expect(inviteCodeFromUrl("https://138-16-224-172.sslip.io/invite/AbC-12", own)).toBe("AbC-12");
+    expect(inviteCodeFromUrl("https://138-16-224-172.sslip.io/invite/AbC-12/", own)).toBe("AbC-12");
+    expect(inviteCodeFromUrl("https://138-16-224-172.sslip.io/#/invite/xyz", own)).toBe("xyz");
+    expect(inviteCodeFromUrl("http://138.16.224.172/invite/xyz?utm=1", own)).toBe("xyz");
+    expect(inviteCodeFromUrl("https://example.com/invite/xyz", own)).toBeNull();
+    expect(inviteCodeFromUrl("https://138-16-224-172.sslip.io/files/invite/xyz", own)).toBeNull();
+    expect(inviteCodeFromUrl("not a url", own)).toBeNull();
   });
 });

@@ -19,10 +19,13 @@ const packaged = () => {
   return location.protocol === "file:" || location.protocol === "app:" || !!cap?.isNativePlatform?.();
 };
 
+/** The desktop page (app://) is a secure context: plain-http addresses are blocked there as mixed content. */
+const usable = (base: string) => !(location.protocol === "app:" && base.startsWith("http:"));
+
 export function serverBase(): string {
   if (BAKED) {
     const active = safeGet(ACTIVE_KEY);
-    return active && (active === BAKED || active === FALLBACK) ? active : BAKED;
+    return active && (active === BAKED || active === FALLBACK) && usable(active) ? active : BAKED;
   }
   return safeGet(KEY) ?? "";
 }
@@ -48,12 +51,46 @@ export function normalizeServer(input: string): string {
   return v;
 }
 
-/** Switch primary ↔ fallback after a network-level failure; returns true if switched. */
-export function switchToFallback(): boolean {
-  if (!BAKED || !FALLBACK || FALLBACK === BAKED) return false;
-  const next = serverBase() === BAKED ? FALLBACK : BAKED;
-  localStorage.setItem(ACTIVE_KEY, next);
-  return true;
+const reachable = (base: string) =>
+  fetch(`${base}/health`, { cache: "no-store", signal: AbortSignal.timeout(5000) }).then(
+    (r) => r.ok,
+    () => false
+  );
+
+/**
+ * Switch primary ↔ fallback after a network-level failure; returns true if
+ * switched. A blocked request looks exactly like a network error to fetch(), so
+ * the switch happens only when the current address really doesn't answer and
+ * the other one does — never because of one failed call.
+ */
+let switching: Promise<boolean> | null = null;
+export function switchToFallback(): Promise<boolean> {
+  // Requests failing together share one check.
+  return (switching ??= (async () => {
+    if (!BAKED || !FALLBACK || FALLBACK === BAKED) return false;
+    const cur = serverBase();
+    const next = cur === BAKED ? FALLBACK : BAKED;
+    if (!usable(next) || (await reachable(cur)) || !(await reachable(next))) return false;
+    localStorage.setItem(ACTIVE_KEY, next);
+    return true;
+  })().finally(() => (switching = null)));
+}
+
+/** Hosts this app talks to (the server, its fallback, or the page itself on the web). */
+function ownHosts(): string[] {
+  return [serverBase() || location.origin, BAKED, FALLBACK].filter(Boolean).map((b) => new URL(b).host);
+}
+
+/** The code when `url` is an invite link to this server (…/invite/CODE or …/#/invite/CODE), else null. */
+export function inviteCodeFromUrl(url: string, hosts: string[] = ownHosts()): string | null {
+  let u: URL;
+  try {
+    u = new URL(url);
+  } catch {
+    return null;
+  }
+  if (!hosts.includes(u.host)) return null;
+  return (/^\/invite\/([\w-]+)\/?$/.exec(u.pathname) ?? /^#\/invite\/([\w-]+)/.exec(u.hash))?.[1] ?? null;
 }
 
 export function apiUrl(path: string): string {

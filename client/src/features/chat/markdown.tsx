@@ -6,7 +6,7 @@ import clsx from "clsx";
 import { Copy, Check } from "lucide-react";
 import { displayName, roleColor, useData } from "../../store/data";
 import { navigate, useUI } from "../../store/ui";
-import { mediaUrl } from "../../lib/server";
+import { inviteCodeFromUrl, mediaUrl } from "../../lib/server";
 import { useSettings } from "../../store/settings";
 import { isDesktop } from "../../lib/platform";
 import { t } from "../../lib/i18n";
@@ -252,6 +252,13 @@ function CustomEmoji({ name, id, animated }: { name: string; id: string; animate
 }
 
 export function openLink(url: string, e?: React.MouseEvent) {
+  // An invite to this server joins right here, not in a browser tab.
+  const invite = inviteCodeFromUrl(url);
+  if (invite) {
+    e?.preventDefault();
+    useUI.getState().setModal({ kind: "acceptInvite", code: invite });
+    return;
+  }
   if (isDesktop) {
     e?.preventDefault();
     window.nova!.openExternal(url);

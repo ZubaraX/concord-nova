@@ -32,9 +32,16 @@ export async function buildApp(opts: { logger?: boolean | object } = {}): Promis
   mkdirSync(storageDir, { recursive: true });
   mkdirSync(cacheDir, { recursive: true });
 
-  // Token auth (no cookies) — any origin may call the API; desktop (file://)
-  // and the Android WebView included.
-  await app.register(cors, { origin: true, credentials: false, maxAge: 86_400, exposedHeaders: ["retry-after"] });
+  // Token auth (no cookies) — any origin may call the API: the desktop app
+  // (app://nova) and the Android WebView included. @fastify/cors allows only
+  // GET/HEAD/POST by default, which made every edit from the apps fail.
+  await app.register(cors, {
+    origin: true,
+    credentials: false,
+    methods: ["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"],
+    maxAge: 86_400,
+    exposedHeaders: ["retry-after"],
+  });
   await app.register(rateLimit, {
     global: true,
     max: 1200,
@@ -83,9 +90,14 @@ export async function buildApp(opts: { logger?: boolean | object } = {}): Promis
     });
     const sendIndex = (reply: import("fastify").FastifyReply) => reply.header("Cache-Control", "no-cache").type("text/html").sendFile("index.html");
     app.get("/", (_req, reply) => sendIndex(reply));
-    // SPA fallback: deep links like /invite/CODE or /channels/… load the app.
+    // Deep links like /invite/CODE go to the app's hash route (/#/invite/CODE).
+    // The page can't be served at the deep path itself: the build references
+    // its assets relatively (the same build runs from app:// and on Android).
     app.setNotFoundHandler((req, reply) => {
-      if (req.method === "GET" && !NON_SPA.test(req.url) && (req.headers.accept ?? "").includes("text/html")) return sendIndex(reply);
+      if (req.method === "GET" && !NON_SPA.test(req.url) && (req.headers.accept ?? "").includes("text/html")) {
+        const path = req.url.split("?")[0];
+        return path === "/index.html" ? sendIndex(reply) : reply.redirect(`/#${path}`, 302);
+      }
       return reply.code(404).send({ error: { code: "not_found", message: `No route for ${req.method} ${req.url.split("?")[0]}` } });
     });
     app.log.info(`serving web client from ${config.webDist}`);

@@ -156,8 +156,9 @@ export async function api<T = unknown>(path: string, opts: RequestOptions = {}):
     res = await doFetch(token);
   } catch (e) {
     if ((e as Error)?.name === "AbortError") throw e;
-    // Network-level failure: try the fallback base once per session.
-    if (!switchedOnce && switchToFallback()) {
+    // Network-level failure: try the fallback base once per session (only if
+    // the current address is really unreachable — see switchToFallback).
+    if (!switchedOnce && (await switchToFallback())) {
       switchedOnce = true;
       try {
         res = await doFetch(token);

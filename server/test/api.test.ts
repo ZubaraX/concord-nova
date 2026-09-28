@@ -476,6 +476,33 @@ describe("android push", () => {
   });
 });
 
+describe("apps and links", () => {
+  // The desktop app (app://nova) and the Android WebView call the API cross-origin:
+  // every method the client uses must pass the CORS preflight.
+  it("the CORS preflight allows every method the apps use", async () => {
+    for (const method of ["PATCH", "PUT", "DELETE"]) {
+      const res = await fetch(base + "/api/users/@me", {
+        method: "OPTIONS",
+        headers: { origin: "app://nova", "access-control-request-method": method, "access-control-request-headers": "authorization,content-type,x-nova-platform" },
+      });
+      expect(res.status).toBe(204);
+      expect(res.headers.get("access-control-allow-origin")).toBe("app://nova");
+      expect(res.headers.get("access-control-allow-methods") ?? "", method).toContain(method);
+    }
+  });
+
+  // The web build uses relative asset paths, so a page opened at /invite/CODE
+  // would look for /invite/assets/… — deep links go to the hash route instead.
+  it("invite links open the web app on its hash route", async () => {
+    const res = await fetch(base + "/invite/AbC-12", { headers: { accept: "text/html" }, redirect: "manual" });
+    expect(res.status).toBe(302);
+    expect(res.headers.get("location")).toBe("/#/invite/AbC-12");
+    const other = await fetch(base + "/some/deep/path", { headers: { accept: "text/html" }, redirect: "manual" });
+    expect(other.headers.get("location")).toBe("/#/some/deep/path");
+    expect((await fetch(base + "/api/nope", { headers: { accept: "text/html" }, redirect: "manual" })).status).toBe(404);
+  });
+});
+
 describe("ssrf guard", () => {
   it("blocks internal addresses", async () => {
     const { isPrivateIp, safeFetch } = await import("../src/lib/ssrf");

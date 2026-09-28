@@ -1,4 +1,4 @@
-import { memo } from "react";
+import { memo, useState } from "react";
 import clsx from "clsx";
 import { Smartphone } from "lucide-react";
 import type { PresenceStatus } from "@nova/shared";
@@ -57,8 +57,14 @@ export interface AvatarProps {
   square?: boolean;
 }
 
+/** `url` until it fails to load — a missing file then shows the initials, not an empty circle. */
+function useImage(url: string | undefined): [string | undefined, () => void] {
+  const [failed, setFailed] = useState<string | null>(null);
+  return [url && url !== failed ? url : undefined, () => setFailed(url ?? null)];
+}
+
 export const Avatar = memo(function Avatar({ userId, src, name, size = 40, status, mobile, className, statusRing, speaking, square }: AvatarProps) {
-  const url = mediaUrl(src, size);
+  const [url, onError] = useImage(mediaUrl(src, size));
   const dot = Math.max(10, Math.round(size * 0.3));
   return (
     <div className={clsx("relative shrink-0", className)} style={{ width: size, height: size }}>
@@ -68,7 +74,7 @@ export const Avatar = memo(function Avatar({ userId, src, name, size = 40, statu
         style={{ background: url ? undefined : colorFor(userId ?? name) }}
       >
         {url ? (
-          <img src={url} alt="" draggable={false} loading="lazy" decoding="async" className="h-full w-full object-cover" />
+          <img src={url} alt="" draggable={false} loading="lazy" decoding="async" onError={onError} className="h-full w-full object-cover" />
         ) : (
           <span className="flex h-full w-full select-none items-center justify-center font-semibold text-white" style={{ fontSize: Math.max(10, size * 0.38) }}>
             {initials(name)}
@@ -103,7 +109,7 @@ export function UserAvatar({ userId, size = 40, showStatus = true, className, st
 }
 
 export function GuildIcon({ guildId, name, icon, size = 48, active, className }: { guildId: string; name: string; icon: string | null; size?: number; active?: boolean; className?: string }) {
-  const url = mediaUrl(icon, size);
+  const [url, onError] = useImage(mediaUrl(icon, size));
   const letters = name
     .split(/\s+/)
     .filter(Boolean)
@@ -116,7 +122,7 @@ export function GuildIcon({ guildId, name, icon, size = 48, active, className }:
       style={{ width: size, height: size, background: url ? undefined : `linear-gradient(145deg, ${colorFor(guildId)}, rgb(var(--raised)))` }}
     >
       {url ? (
-        <img src={url} alt="" draggable={false} className="h-full w-full object-cover" />
+        <img src={url} alt="" draggable={false} onError={onError} className="h-full w-full object-cover" />
       ) : (
         <span className="select-none font-display text-[15px] font-semibold text-white" style={{ fontSize: letters.length > 2 ? size * 0.26 : size * 0.33 }}>
           {letters.toUpperCase() || "?"}
