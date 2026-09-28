@@ -152,10 +152,35 @@ async function importAttachment(url: string, filename: string, at: number) {
   return { rel, size, full };
 }
 
+/**
+ * Real Concord databases carry duplicates its schema never prevented (votes
+ * repeated in poll JSON, two @everyone roles, …). Nova's keys are strict, so
+ * every batch is de-duplicated on its unique key before writing.
+ */
+function uniq<T>(label: string, list: T[], key: (x: T) => string): T[] {
+  const seen = new Set<string>();
+  return list.filter((x) => {
+    const k = key(x);
+    if (seen.has(k)) {
+      bump(`${label}: duplicates skipped`);
+      return false;
+    }
+    seen.add(k);
+    return true;
+  });
+}
+
 async function insert<T>(label: string, list: T[], write: (chunk: T[]) => Promise<unknown>) {
   bump(label, list.length);
   if (DRY) return;
-  for (let i = 0; i < list.length; i += 400) await write(list.slice(i, i + 400));
+  for (let i = 0; i < list.length; i += 400) {
+    try {
+      await write(list.slice(i, i + 400));
+    } catch (e) {
+      const why = e instanceof Error ? e.message.split("\n").filter(Boolean).slice(-2).join(" ") : String(e);
+      throw new Error(`writing ${label} (rows ${i + 1}–${Math.min(i + 400, list.length)}): ${why}`);
+    }
+  }
 }
 
 // ── main ──────────────────────────────────────────────────────────────────────
@@ -174,8 +199,44 @@ async function main() {
   const taken = new Set((await prisma.user.findMany({ select: { username: true } })).map((u) => u.username));
   const newUsers: Prisma.UserCreateManyInput[] = [];
   const oldUsers = rows("User");
+
+  // Concord compared emails case-sensitively, so "Ann@x.ru" and "ann@x.ru"
+  // could be two accounts; Nova's emails are unique case-insensitively. The
+  // most recently active account keeps the address, the others get
+  // "name+concord2@domain" and sign in with their username as before.
+  const lastActive = new Map<string, number>();
+  const touch = (id: unknown, t: unknown) => {
+    const v = ms(t);
+    if (v > (lastActive.get(String(id)) ?? 0)) lastActive.set(String(id), v);
+  };
+  for (const u of oldUsers) touch(u.id, u.createdAt);
+  if (tableExists("Message")) for (const r of old.prepare('SELECT "authorId" AS a, MAX("createdAt") AS t FROM "Message" GROUP BY "authorId"').all() as Row[]) touch(r.a, r.t);
+  if (tableExists("RefreshToken")) for (const r of old.prepare('SELECT "userId" AS u, MAX("createdAt") AS t FROM "RefreshToken" GROUP BY "userId"').all() as Row[]) touch(r.u, r.t);
+  const normEmail = (u: Row) => {
+    const e = String(u.email ?? "").trim().toLowerCase();
+    return e.includes("@") ? e : `${e || "user"}-${String(u.id).slice(-8)}@concord.local`;
+  };
+  const byEmail = new Map<string, Row[]>();
+  for (const u of oldUsers) byEmail.set(normEmail(u), [...(byEmail.get(normEmail(u)) ?? []), u]);
+  const takenEmails = new Set(FORCE ? (await prisma.user.findMany({ select: { email: true } })).map((u) => u.email.toLowerCase()) : []);
+  const emailOf = new Map<string, string>();
+  const emailChanges: string[] = [];
+  for (const [email, group] of byEmail) {
+    group.sort((a, b) => (lastActive.get(String(b.id)) ?? 0) - (lastActive.get(String(a.id)) ?? 0));
+    group.forEach((u, i) => {
+      if (i === 0) return void emailOf.set(String(u.id), email);
+      const at = email.lastIndexOf("@");
+      let cand = "";
+      for (let n = i + 1; !cand || byEmail.has(cand) || takenEmails.has(cand); n++) cand = `${email.slice(0, at)}+concord${n}${email.slice(at)}`;
+      takenEmails.add(cand);
+      emailOf.set(String(u.id), cand);
+      emailChanges.push(`${u.username}: ${String(u.email).trim()} → ${cand}`);
+    });
+  }
+  if (emailChanges.length) bump("emails de-duplicated", emailChanges.length);
+
   for (const [i, u] of oldUsers.entries()) {
-    const email = String(u.email).trim().toLowerCase();
+    const email = emailOf.get(String(u.id))!;
     oldUsername.set(String(u.id), String(u.username));
     const existing = FORCE ? await prisma.user.findUnique({ where: { email }, select: { id: true } }) : null;
     if (existing) {
@@ -206,7 +267,7 @@ async function main() {
       createdAt: date(u.createdAt),
     });
   }
-  await insert("accounts", newUsers, (c) => prisma.user.createMany({ data: c }));
+  await insert("accounts", uniq("accounts", uniq("accounts", newUsers, (u) => u.id), (u) => u.email), (c) => prisma.user.createMany({ data: c }));
   const U = (oldId: unknown) => userMap.get(String(oldId));
 
   // ── friends ──
@@ -230,7 +291,7 @@ async function main() {
       addRel(b, a, RelationshipType.INCOMING, since);
     }
   }
-  await insert("relationships", rels, (c) => prisma.relationship.createMany({ data: c }));
+  await insert("relationships", uniq("relationships", rels, (r) => `${r.userId}|${r.targetId}`), (c) => prisma.relationship.createMany({ data: c }));
 
   // ── guilds, roles, members ──
   const guildMap = new Map<string, string>();
@@ -254,7 +315,7 @@ async function main() {
       createdAt: date(g.createdAt),
     });
   }
-  await insert("servers", newGuilds, (c) => prisma.guild.createMany({ data: c }));
+  await insert("servers", uniq("servers", newGuilds, (g) => g.id), (c) => prisma.guild.createMany({ data: c }));
   const G = (oldId: unknown) => guildMap.get(String(oldId));
 
   const newRoles = [];
@@ -292,7 +353,7 @@ async function main() {
       });
     });
   }
-  await insert("roles", newRoles, (c) => prisma.role.createMany({ data: c }));
+  await insert("roles", uniq("roles", newRoles, (r) => r.id), (c) => prisma.role.createMany({ data: c }));
 
   const newMembers: { guildId: string; userId: string; nick: string | null; joinedAt: Date }[] = [];
   for (const m of rows("GuildMember", "joinedAt")) {
@@ -315,7 +376,7 @@ async function main() {
       newMembers.push({ guildId: g.id, userId: g.ownerId, nick: null, joinedAt: g.createdAt });
     }
   }
-  await insert("members", newMembers, (c) => prisma.member.createMany({ data: c }));
+  await insert("members", uniq("members", newMembers, (m) => `${m.guildId}|${m.userId}`), (c) => prisma.member.createMany({ data: c }));
 
   const memberRoles: { guildId: string; userId: string; roleId: string }[] = [];
   if (tableExists("_GuildMemberToRole")) {
@@ -325,7 +386,7 @@ async function main() {
       if (m && roleId && roleId !== m.guildId) memberRoles.push({ ...m, roleId });
     }
   }
-  await insert("role assignments", memberRoles, (c) => prisma.memberRole.createMany({ data: c }));
+  await insert("role assignments", uniq("role assignments", memberRoles, (r) => `${r.guildId}|${r.userId}|${r.roleId}`), (c) => prisma.memberRole.createMany({ data: c }));
 
   // ── emoji ──
   const emojiByGuild = new Map<string, Map<string, { id: string; animated: boolean }>>();
@@ -344,7 +405,7 @@ async function main() {
     map.set(name.toLowerCase(), { id, animated });
     newEmojis.push({ id, guildId, name, path, animated, createdAt: date(e.createdAt) });
   }
-  await insert("emoji", newEmojis, (c) => prisma.emoji.createMany({ data: c }));
+  await insert("emoji", uniq("emoji", newEmojis, (e) => `${e.guildId}|${e.name}`), (c) => prisma.emoji.createMany({ data: c }));
   if (rows("GuildSticker").length) bump("stickers skipped", rows("GuildSticker").length);
 
   // ── channels ──
@@ -426,8 +487,8 @@ async function main() {
       }
     }
   }
-  await insert("channels", newChannels, (c) => prisma.channel.createMany({ data: c }));
-  await insert("DM recipients", recipients, (c) => prisma.channelRecipient.createMany({ data: c }));
+  await insert("channels", uniq("channels", newChannels, (c) => c.id!), (c) => prisma.channel.createMany({ data: c }));
+  await insert("DM recipients", uniq("DM recipients", recipients, (r) => `${r.channelId}|${r.userId}`), (c) => prisma.channelRecipient.createMany({ data: c }));
 
   // Guild system channel: first text channel by position.
   if (!DRY) {
@@ -586,9 +647,9 @@ async function main() {
       });
     }
   }
-  await insert("messages", newMessages, (c) => prisma.message.createMany({ data: c }));
-  await insert("attachments", newAttachments, (c) => prisma.attachment.createMany({ data: c }));
-  await insert("poll votes", pollVotes, (c) => prisma.pollVote.createMany({ data: c }));
+  await insert("messages", uniq("messages", newMessages, (m) => m.id!), (c) => prisma.message.createMany({ data: c }));
+  await insert("attachments", uniq("attachments", newAttachments, (a) => a.id!), (c) => prisma.attachment.createMany({ data: c }));
+  await insert("poll votes", uniq("poll votes", pollVotes, (v) => `${v.messageId}|${v.answerId}|${v.userId}`), (c) => prisma.pollVote.createMany({ data: c }));
 
   // Channel bookkeeping: last message, pins, thread starters/counters.
   if (!DRY) {
@@ -630,7 +691,7 @@ async function main() {
     reactSeen.add(k);
     reactions.push({ messageId, userId, emoji, createdAt: date(r.createdAt) });
   }
-  await insert("reactions", reactions, (c) => prisma.reaction.createMany({ data: c }));
+  await insert("reactions", uniq("reactions", reactions, (r) => `${r.messageId}|${r.userId}|${r.emoji}`), (c) => prisma.reaction.createMany({ data: c }));
 
   // ── read positions: Concord's lastReadAt → Nova's lastReadId. Channels a user
   //    never opened count as read, so the first launch isn't a wall of unread badges.
@@ -650,7 +711,7 @@ async function main() {
       readStates.push({ userId, channelId, lastReadId: bound < last ? bound : last });
     }
   }
-  await insert("read positions", readStates, (c) => prisma.readState.createMany({ data: c }));
+  await insert("read positions", uniq("read positions", readStates, (r) => `${r.userId}|${r.channelId}`), (c) => prisma.readState.createMany({ data: c }));
 
   // ── invites ──
   const invites = [];
@@ -662,7 +723,7 @@ async function main() {
     if (expiresAt && expiresAt.getTime() < Date.now()) continue;
     invites.push({ code, guildId, inviterId: U(i.inviterId) ?? null, uses: Number(i.uses ?? 0), maxUses: Number(i.maxUses ?? 0), expiresAt, createdAt: date(i.createdAt) });
   }
-  await insert("invites", invites, (c) => prisma.invite.createMany({ data: c }));
+  await insert("invites", uniq("invites", invites, (i) => i.code), (c) => prisma.invite.createMany({ data: c }));
 
   // ── scheduled messages still in the future ──
   const scheduled = [];
@@ -672,7 +733,7 @@ async function main() {
     if (!channelId || !authorId || !valid.has(channelId) || ms(s.sendAt) < Date.now()) continue;
     scheduled.push({ id: idAt(ms(s.createdAt)), channelId, authorId, content: String(s.content ?? ""), sendAt: date(s.sendAt), createdAt: date(s.createdAt) });
   }
-  await insert("scheduled messages", scheduled, (c) => prisma.scheduledMessage.createMany({ data: c }));
+  await insert("scheduled messages", uniq("scheduled messages", scheduled, (m) => m.id), (c) => prisma.scheduledMessage.createMany({ data: c }));
 
   console.log("\n✅ Done" + (DRY ? " (dry run)" : "") + ":");
   for (const [k, v] of Object.entries(stats)) console.log(`   ${k.padEnd(20)} ${v}`);
@@ -680,6 +741,11 @@ async function main() {
   if (renamed.length) {
     console.log("\n   Usernames adapted to Nova's format (a-z 0-9 _ . — sign in with email or the new name):");
     for (const u of renamed) console.log(`     ${oldUsername.get([...userMap].find(([, n]) => n === u.id)?.[0] ?? "")} → ${u.username}`);
+  }
+  if (emailChanges.length) {
+    console.log("\n   Accounts that shared an email (differing only in letter case) — the most recently active one kept it;");
+    console.log("   these sign in with their username and old password:");
+    for (const line of emailChanges) console.log(`     ${line}`);
   }
   console.log("\n   Everyone signs in again once (sessions are not carried over). Restart the Nova server to load the data.");
 }
