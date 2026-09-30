@@ -12,8 +12,9 @@ import { VOICE_EFFECTS } from "../voice/effects";
 import { IconButton } from "../../components/ui/primitives";
 import { MenuList, Popover, Tooltip, usePopover } from "../../components/ui/overlay";
 import { UserAvatar, StatusDot } from "../../components/ui/avatar";
-import { leaveVoice, toggleCamera, toggleDeafen, toggleMute, toggleScreen, useVoice } from "../voice/voice";
+import { ALONE_MS, leaveVoice, stayInCall, toggleCamera, toggleDeafen, toggleMute, toggleScreen, useVoice } from "../voice/voice";
 import { PingButton } from "../voice/ConnectionStats";
+import { SoundboardButton } from "../voice/Soundboard";
 import { usePing } from "../voice/stats";
 import type { ChosenStatus } from "@nova/shared";
 
@@ -24,6 +25,24 @@ function CallTimer({ since }: { since: number }) {
     return () => clearInterval(id);
   }, []);
   return <span className="tabular-nums">{fmtClock((now - since) / 1000)}</span>;
+}
+
+/** "Nobody here — leaving in 0:42", with a way to stay. */
+function AloneCountdown({ since }: { since: number }) {
+  const [now, setNow] = useState(Date.now());
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, []);
+  const left = Math.max(0, Math.ceil((since + ALONE_MS - now) / 1000));
+  return (
+    <div className="mt-2 flex items-center gap-2 rounded-lg bg-warn/10 px-2.5 py-1.5 text-[12.5px] leading-snug text-warn" data-alone-countdown>
+      <span className="min-w-0 flex-1">{t("voice.aloneIn", { time: fmtClock(left) })}</span>
+      <button onClick={stayInCall} className="shrink-0 rounded-md px-1.5 py-0.5 font-semibold hover:bg-warn/15">
+        {t("voice.stay")}
+      </button>
+    </div>
+  );
 }
 
 export function VoicePanel() {
@@ -56,7 +75,8 @@ export function VoicePanel() {
           <PhoneOff size={18} />
         </IconButton>
       </div>
-      <div className="mt-2 grid grid-cols-4 gap-1.5">
+      {v.aloneSince && v.state === "connected" && <AloneCountdown since={v.aloneSince} />}
+      <div className="mt-2 grid grid-cols-5 gap-1.5">
         <button onClick={() => void toggleCamera()} className={clsx("flex h-8 items-center justify-center rounded-lg transition-colors", v.cameraOn ? "bg-star/20 text-star" : "bg-raised text-fg-2 hover:bg-overlay hover:text-fg")} aria-label={v.cameraOn ? t("voice.cameraOff") : t("voice.camera")}>
           {v.cameraOn ? <VideoOff size={17} /> : <Video size={17} />}
         </button>
@@ -70,6 +90,7 @@ export function VoicePanel() {
         </button>
         <NoiseToggle />
         <VoiceEffectButton />
+        <SoundboardButton iconSize={17} className="flex h-8 w-full items-center justify-center rounded-lg bg-raised text-fg-2 transition-colors hover:bg-overlay hover:text-fg" />
       </div>
     </div>
   );

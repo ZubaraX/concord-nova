@@ -349,6 +349,40 @@ if [ "$OLD_PRESENT" = 1 ]; then
   ok "service, nginx site and $OLD_DIR removed — archive kept at $BACKUP"
 fi
 
+# ── GIF search: carry the old Concord's KLIPY key over ───────────────────────
+# The old server kept the key in its .env, which now lives in the archive made
+# above (on this run or an earlier one). Nova takes it only while it has no key
+# of its own — neither in nova.env nor saved from the app.
+OLD_BACKUPS="${OLD_BACKUPS:-/root}"
+old_gif_key() {
+  local b m line key
+  for b in $(ls -1t "$OLD_BACKUPS"/concord-backup-*.tar.gz 2>/dev/null); do
+    for m in "${OLD_DIR#/}/.env" "${OLD_DIR#/}/server/.env"; do
+      line=$(tar -xzOf "$b" --occurrence=1 "$m" 2>/dev/null | grep -E '^[[:space:]]*KLIPY_KEY=' | tail -n1 || true)
+      key=$(printf '%s' "${line#*=}" | tr -d "\"'\r[:space:]")
+      if [[ "$key" =~ ^[A-Za-z0-9_-]{8,128}$ ]]; then
+        printf '%s' "$key"
+        return 0
+      fi
+    done
+  done
+  return 0
+}
+GIF_SAVED=$(sqlite3 "$DATA_DIR/nova.db" "SELECT COUNT(*) FROM \"InstanceSetting\" WHERE \"key\"='gifKey';" 2>/dev/null || echo 0)
+if [ -z "${KLIPY_KEY:-}" ] && [ "$GIF_SAVED" = 0 ]; then
+  GIF_KEY=$(old_gif_key)
+  if [ -n "$GIF_KEY" ]; then
+    say "GIF search"
+    if grep -q '^KLIPY_KEY=' "$ENV_FILE"; then
+      sed -i "s|^KLIPY_KEY=.*|KLIPY_KEY=${GIF_KEY}|" "$ENV_FILE"
+    else
+      printf 'KLIPY_KEY=%s\n' "$GIF_KEY" >>"$ENV_FILE"
+    fi
+    KLIPY_KEY="$GIF_KEY"
+    ok "KLIPY key carried over from the old Concord (${GIF_KEY:0:4}…)"
+  fi
+fi
+
 # ── instance admin (push.mjs --admin <login>) ────────────────────────────────
 if [ -n "${NOVA_ADMIN:-}" ]; then
   say "Admin rights"
@@ -545,10 +579,17 @@ if [ -d "/etc/letsencrypt/live/$DOMAIN" ] && curl -fsS --max-time 10 "https://${
   URL="https://${DOMAIN}"
 fi
 ADMINS=$(sqlite3 "$DATA_DIR/nova.db" 'SELECT group_concat("username", ", ") FROM "User" WHERE ("flags" & 1) != 0 AND "disabledAt" IS NULL;' 2>/dev/null || true)
+# What the running server itself reports (a key saved from the app wins over nova.env).
+if curl -fsS --max-time 5 "http://127.0.0.1:${PORT}/api/auth/info" 2>/dev/null | grep -q '"gifs":true'; then
+  GIFS="search is on"
+else
+  GIFS="search is off — paste a free KLIPY key in the app (Settings → Nova server → Overview)"
+fi
 cat <<DONE
 
 ✅ Concord Nova is live: ${URL}
    Admins:   ${ADMINS:-none yet — re-run the deploy and enter your login when asked} (app: Settings → Nova server)
+   GIFs:     ${GIFS}
    Logs:     journalctl -u nova -f   |   journalctl -u livekit -f
    Settings: ${ENV_FILE}  (then: systemctl restart nova)
    Backups:  ${DATA_DIR}/backups

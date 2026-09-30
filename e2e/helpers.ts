@@ -74,7 +74,16 @@ export async function openAs(
   browser: Browser,
   user: User | null,
   path = "/",
-  opts: { viewport?: { width: number; height: number }; desktop?: boolean; /** Call the API on this address (cross-origin, like the desktop and Android apps). */ server?: string; /** Device-local settings to start with (e.g. { noise: "off" }). */ local?: Record<string, unknown> } = {}
+  opts: {
+    viewport?: { width: number; height: number };
+    desktop?: boolean;
+    /** Call the API on this address (cross-origin, like the desktop and Android apps). */
+    server?: string;
+    /** Device-local settings to start with (e.g. { noise: "off" }). */
+    local?: Record<string, unknown>;
+    /** Raw localStorage entries (test knobs such as "nova.test.aloneMs"). */
+    storage?: Record<string, string>;
+  } = {}
 ): Promise<Session> {
   const context = await browser.newContext({
     baseURL: BASE,
@@ -95,6 +104,7 @@ export async function openAs(
     );
   }
   if (opts.local) await context.addInitScript((l) => localStorage.setItem("nova.settings.local", JSON.stringify({ localVersion: 1, ...l })), opts.local);
+  if (opts.storage) await context.addInitScript((entries) => Object.entries(entries).forEach(([k, v]) => localStorage.setItem(k, v)), opts.storage);
   if (opts.desktop) await context.addInitScript(stubDesktopBridge);
   if (opts.server) await context.addInitScript((url) => localStorage.setItem("nova.server", url), opts.server);
   const page = await context.newPage();

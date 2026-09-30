@@ -165,6 +165,34 @@ export class MicProcessor implements TrackProcessor<Track.Kind.Audio, AudioProce
     this.fx.output.connect(dest);
   }
 
+  /**
+   * Soundboard: mixes a clip into the outgoing track after the denoiser, the
+   * gate and the voice effect — it is heard as it is, even while the mic is
+   * muted. Null when the chain isn't running. Returns a stop function.
+   */
+  playClip(buffer: AudioBuffer, gain = 1): (() => void) | null {
+    const { ctx, dest } = this;
+    if (!ctx || !dest) return null;
+    const src = ctx.createBufferSource();
+    src.buffer = buffer;
+    const g = ctx.createGain();
+    g.gain.value = gain;
+    src.connect(g).connect(dest);
+    this.nodes.push(g);
+    src.onended = () => {
+      g.disconnect();
+      this.nodes = this.nodes.filter((n) => n !== g);
+    };
+    src.start();
+    return () => {
+      try {
+        src.stop();
+      } catch {
+        /* already over */
+      }
+    };
+  }
+
   /** Which denoiser actually runs (the deep one falls back to RNNoise if it can't load). */
   denoiser: "deep" | "rnnoise" | "none" = "none";
 

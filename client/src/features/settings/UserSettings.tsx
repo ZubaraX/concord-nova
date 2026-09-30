@@ -23,6 +23,7 @@ import { UserAvatar } from "../../components/ui/avatar";
 import { Markdown } from "../chat/markdown";
 import { startMicTest } from "../voice/processor";
 import { VOICE_EFFECTS } from "../voice/effects";
+import { SoundboardPanel } from "../voice/Soundboard";
 import { Modal, ModalFooter, ModalHeader } from "../../components/ui/overlay";
 import { SettingsLayout, SectionTitle, Group } from "./SettingsLayout";
 import { AdminGuilds, AdminOverview, AdminUsers } from "./AdminSettings";
@@ -698,6 +699,22 @@ function Voice() {
         <SettingRow title={t("settings.joinMuted")}>
           <Switch checked={s.joinMuted} onChange={(v) => s.setLocal({ joinMuted: v })} />
         </SettingRow>
+        <SettingRow title={t("settings.autoLeave")} hint={t("settings.autoLeaveHint")}>
+          <Segmented<typeof s.autoLeave>
+            value={s.autoLeave}
+            onChange={(v) => s.setSynced({ autoLeave: v })}
+            options={[
+              { value: "always", label: t("settings.autoLeaveAlways") },
+              { value: "calls", label: t("settings.autoLeaveCalls") },
+              { value: "never", label: t("settings.autoLeaveNever") },
+            ]}
+          />
+        </SettingRow>
+      </Group>
+      <Group title={t("soundboard.title")}>
+        <div className="py-3">
+          <SoundboardPanel embedded />
+        </div>
       </Group>
       <Group title={t("voice.fx.title")}>
         <div className="grid grid-cols-2 gap-2 py-3 sm:grid-cols-5" data-voice-effects>

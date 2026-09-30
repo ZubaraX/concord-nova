@@ -52,6 +52,8 @@ export interface VoiceStore {
   reactions: { id: number; userId: string; emoji: string; x: number }[];
   /** The denoiser actually running on the microphone ("deep" falls back to "rnnoise" if it can't load). */
   denoiser: "deep" | "rnnoise" | "none";
+  /** Since when there is nobody else in the call — the countdown to hanging up (null: not counting). */
+  aloneSince: number | null;
 }
 
 export const useVoice = create<VoiceStore>(() => ({
@@ -71,6 +73,7 @@ export const useVoice = create<VoiceStore>(() => ({
   focus: null,
   reactions: [],
   denoiser: "none",
+  aloneSince: null,
 }));
 
 const V = () => useVoice.getState();
@@ -122,6 +125,7 @@ useSettings.subscribe((s, prev) => {
   if (s.outputDevice !== prev.outputDevice && room) void room.switchActiveDevice("audiooutput", s.outputDevice ?? "default").catch(() => {});
   if (s.inputVolume !== prev.inputVolume) mic?.setInputVolume(s.inputVolume);
   if (s.voiceEffect !== prev.voiceEffect) mic?.setEffect(s.voiceEffect);
+  if (s.autoLeave !== prev.autoLeave) watchAlone();
   if ((s.noise !== prev.noise || s.echoCancellation !== prev.echoCancellation || s.autoGain !== prev.autoGain || s.inputDevice !== prev.inputDevice) && room) void restartMic();
 });
 
@@ -171,11 +175,73 @@ export function micLevel(): number {
   return mic?.level ?? -100;
 }
 
+/** Soundboard: plays a sound to everyone in the call through the microphone track. Null when nothing is being sent (no call, no microphone). */
+export function playIntoCall(buffer: AudioBuffer, gain: number): (() => void) | null {
+  if (!room || !mic || !room.localParticipant.getTrackPublication(Track.Source.Microphone)) return null;
+  return mic.playClip(buffer, gain);
+}
+
+// ── leaving an empty call ────────────────────────────────────────────────────
+// Nobody answered, or everybody left: after a minute alone the call is over.
+// Otherwise a forgotten call keeps the microphone open for hours.
+const ALONE_WARN_MS = 10_000;
+/** How long one may be alone (end-to-end tests shorten it through localStorage). */
+export const ALONE_MS = (() => {
+  try {
+    const n = Number(localStorage.getItem("nova.test.aloneMs"));
+    if (n >= ALONE_WARN_MS) return n;
+  } catch {
+    /* no storage — the default */
+  }
+  return 60_000;
+})();
+let aloneTimers: ReturnType<typeof setTimeout>[] = [];
+/** "Stay" was pressed: no hanging up until somebody joins and leaves again. */
+let stayAlone = false;
+
+function stopAloneWatch() {
+  for (const id of aloneTimers) clearTimeout(id);
+  aloneTimers = [];
+  if (V().aloneSince) setV({ aloneSince: null });
+}
+
+function autoLeaveApplies(channelId: string | null): boolean {
+  const mode = settings().autoLeave;
+  if (!channelId || mode === "never") return false;
+  // "calls": DMs and groups only — in a server channel people also wait for each other.
+  return mode === "always" || !data().channels[channelId]?.guildId;
+}
+
+/** Re-evaluated whenever somebody joins or leaves, the connection state changes, or the setting does. */
+function watchAlone() {
+  const r = room;
+  const others = r?.remoteParticipants.size ?? 0;
+  if (others > 0) stayAlone = false;
+  if (!r || others > 0 || stayAlone || V().state !== "connected" || !autoLeaveApplies(V().channelId)) return stopAloneWatch();
+  if (V().aloneSince) return; // already counting
+  setV({ aloneSince: Date.now() });
+  aloneTimers = [
+    setTimeout(() => toast(t("voice.aloneSoon", { s: ALONE_WARN_MS / 1000 }), "info", { label: t("voice.stay"), run: stayInCall }), ALONE_MS - ALONE_WARN_MS),
+    setTimeout(() => {
+      if (room !== r || r.remoteParticipants.size > 0) return watchAlone();
+      void leaveVoice();
+      toast(t("voice.leftAlone"));
+    }, ALONE_MS),
+  ];
+}
+
+/** Keep the call although nobody is there (the countdown's "Stay"). */
+export function stayInCall() {
+  stayAlone = true;
+  stopAloneWatch();
+}
+
 // ── connect / disconnect ─────────────────────────────────────────────────────
 function wire(r: Room) {
   r.on(RoomEvent.ParticipantConnected, () => {
     playSound("join");
     bump();
+    watchAlone();
   })
     .on(RoomEvent.ParticipantDisconnected, (p) => {
       playSound("leave");
@@ -184,6 +250,7 @@ function wire(r: Room) {
       const focus = V().focus?.userId === p.identity ? null : V().focus;
       setV({ speaking: s, focus });
       bump();
+      watchAlone();
     })
     .on(RoomEvent.TrackSubscribed, (track: RemoteTrack, _pub: RemoteTrackPublication, p: RemoteParticipant) => {
       if (track.kind === Track.Kind.Audio) {
@@ -225,11 +292,15 @@ function wire(r: Room) {
     .on(RoomEvent.ConnectionQualityChanged, (q: ConnectionQuality, p: Participant) => {
       setV({ quality: { ...V().quality, [p.identity]: QUALITY[q] } });
     })
-    .on(RoomEvent.Reconnecting, () => setV({ state: "reconnecting" }))
+    .on(RoomEvent.Reconnecting, () => {
+      setV({ state: "reconnecting" });
+      watchAlone(); // a broken connection is not an empty call
+    })
     .on(RoomEvent.Reconnected, () => {
       setV({ state: "connected" });
       gw.voiceSync(V().channelId);
       reportSelf();
+      watchAlone();
     })
     .on(RoomEvent.AudioPlaybackStatusChanged, () => setV({ needsAudioUnlock: !r.canPlaybackAudio }))
     .on(RoomEvent.DataReceived, (payload, p) => {
@@ -272,6 +343,7 @@ async function onDisconnected(reason?: DisconnectReason) {
 }
 
 function cleanup() {
+  stopAloneWatch();
   for (const el of audioEls.values()) el.remove();
   audioEls.clear();
   void mic?.destroy().catch(() => {});
@@ -286,7 +358,10 @@ export async function joinVoice(channelId: string, isRejoin = false) {
   if (!isRejoin && V().channelId === channelId && (V().state === "connected" || V().state === "connecting")) return;
   if (room) await leaveVoice(true);
   intentional = false;
-  if (!isRejoin) rejoinTries = 0;
+  if (!isRejoin) {
+    rejoinTries = 0;
+    stayAlone = false;
+  }
   setV({ channelId, state: isRejoin ? "reconnecting" : "connecting", joinedAt: isRejoin ? V().joinedAt : Date.now(), deafened: isRejoin ? V().deafened : false, muted: isRejoin ? V().muted : settings().joinMuted || V().muted });
   let join: { url: string | null; token: string };
   try {
@@ -334,6 +409,7 @@ export async function joinVoice(channelId: string, isRejoin = false) {
   gw.voiceSync(channelId);
   reportSelf();
   bump();
+  watchAlone();
 }
 
 export async function leaveVoice(silent = false) {

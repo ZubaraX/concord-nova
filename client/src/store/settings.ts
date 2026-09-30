@@ -30,6 +30,8 @@ export interface SyncedSettings {
   showEmbeds: boolean;
   developerMode: boolean;
   sounds: boolean;
+  /** Hang up after a minute alone in a call: everywhere, only in DM/group calls, or never. */
+  autoLeave: "always" | "calls" | "never";
   guildOrder: string[];
   recentEmoji: string[];
 }
@@ -93,6 +95,7 @@ const SYNC_DEFAULTS: SyncedSettings = {
   showEmbeds: true,
   developerMode: false,
   sounds: true,
+  autoLeave: "always",
   guildOrder: [],
   recentEmoji: [],
 };

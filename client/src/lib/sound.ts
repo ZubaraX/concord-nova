@@ -230,6 +230,43 @@ export function playRingtone(id: string = settings().ringtone, once = false): ()
   };
 }
 
+/** Decodes an audio file; null when the browser can't read it. */
+export async function decodeAudio(file: Blob): Promise<AudioBuffer | null> {
+  const c = ac();
+  if (!c) return null;
+  try {
+    return await c.decodeAudioData(await file.arrayBuffer());
+  } catch {
+    return null;
+  }
+}
+
+/** Plays a decoded sound on this device (soundboard, previews). Returns a stop function; `onEnd` runs either way. */
+export function playBuffer(buffer: AudioBuffer, gain = 1, onEnd?: () => void): () => void {
+  const c = ac();
+  if (!c || !master) {
+    onEnd?.();
+    return () => {};
+  }
+  const src = c.createBufferSource();
+  src.buffer = buffer;
+  const g = c.createGain();
+  g.gain.value = gain;
+  src.connect(g).connect(master);
+  src.onended = () => {
+    g.disconnect();
+    onEnd?.();
+  };
+  src.start();
+  return () => {
+    try {
+      src.stop();
+    } catch {
+      /* already over */
+    }
+  };
+}
+
 /** Checks that a picked file is audio the browser can play, and not an album. */
 export async function validateRingtone(file: Blob): Promise<"ok" | "unreadable" | "too_long"> {
   const c = ac();

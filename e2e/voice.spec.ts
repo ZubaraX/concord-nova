@@ -137,6 +137,53 @@ test("DM call: ring, answer, hang up, call log line", async ({ browser, request 
   noErrors(a, b);
 });
 
+test("an empty call ends by itself; Stay and the setting keep it", async ({ browser, request }) => {
+  const alice = await register(request, "Алиса");
+  const bob = await register(request, "Боб");
+  const { guild, voice } = await guildWith(request, alice, [bob]);
+  // The real limit is a minute; ten seconds here (the warning then comes at once).
+  const quick = { storage: { "nova.test.aloneMs": "10000" } };
+  const a = await openAs(browser, alice, `/#/channels/${guild.id}/${voice.id}`, quick);
+  const b = await openAs(browser, bob, `/#/channels/${guild.id}/${voice.id}`, { ...quick, local: { noise: "off" } });
+  const countdown = a.page.locator("[data-alone-countdown]");
+  const hangUp = a.page.getByRole("button", { name: "Отключиться" });
+
+  // Alone from the start: the countdown runs, "Stay" stops it.
+  await a.page.getByRole("button", { name: "Зайти в канал" }).click();
+  await expect(countdown).toContainText("Никого нет");
+  await countdown.getByRole("button", { name: "Остаться" }).click();
+  await expect(countdown).toHaveCount(0);
+
+  // Somebody came and left: the count starts again, and this time nobody stops it.
+  await b.page.getByRole("button", { name: "Зайти в канал" }).click();
+  await expect(a.page.locator(`[data-user="${bob.id}"]`)).toBeVisible();
+  // Really in the call (not just on the way in): Alice hears Bob's fake microphone.
+  await expect(b.page.getByText("Голосовая связь")).toBeVisible();
+  await expect(a.page.locator(`[data-user="${bob.id}"] [data-speaking="true"]`)).toBeVisible({ timeout: 20_000 });
+  await expect(countdown).toHaveCount(0);
+  await b.page.getByRole("button", { name: "Отключиться" }).first().click();
+  await expect(countdown).toBeVisible();
+  await expect(a.page.getByText("В звонке никого нет. Отключение через 10 секунд.").last()).toBeVisible();
+  await expect(a.page.getByText(/Звонок завершён/)).toBeVisible({ timeout: 15_000 });
+  await expect(hangUp).toHaveCount(0);
+  // Bob sees the channel empty too — the server was told.
+  await expect(b.page.locator(`[data-user="${alice.id}"]`)).toHaveCount(0);
+
+  // "DM calls only": a server channel is left alone.
+  await a.page.getByRole("button", { name: "Зайти в канал" }).click();
+  await expect(countdown).toBeVisible();
+  await a.page.getByRole("button", { name: "Настройки" }).last().click();
+  await a.page.locator("[data-settings] nav").getByRole("button", { name: "Голос и видео", exact: true }).click();
+  await a.page.getByRole("button", { name: "Только личные", exact: true }).click();
+  await a.page.keyboard.press("Escape");
+  await expect(a.page.locator("[data-settings]")).toHaveCount(0);
+  await expect(countdown).toHaveCount(0);
+  await a.page.waitForTimeout(11_000);
+  await expect(hangUp.first()).toBeVisible();
+  await expect(a.page.locator(`[data-user="${alice.id}"]`).first()).toBeVisible();
+  noErrors(a, b);
+});
+
 test("voice changer: every effect produces sound, pitch effects move the pitch", async ({ browser, request }) => {
   const s = await openAs(browser, await register(request, "Голос"));
   const res = await s.page.evaluate(async () => {

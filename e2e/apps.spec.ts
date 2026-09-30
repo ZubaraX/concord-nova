@@ -22,7 +22,7 @@ test("apps (cross-origin): edits, reactions, deletes and profile changes reach t
   // PUT — reaction
   await mine.hover();
   await mine.getByRole("button", { name: "👍" }).click();
-  await expect(messageRow(b.page, "из программы").getByText("1")).toBeVisible();
+  await expect(messageRow(b.page, "из программы").getByRole("button", { name: "👍 1" })).toBeVisible();
 
   // PATCH — edit
   await mine.hover();

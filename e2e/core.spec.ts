@@ -75,7 +75,7 @@ test("messages: live delivery, typing, reply, reaction, edit, delete, pin", asyn
   const mine = messageRow(a.page, "Привет, Боб!");
   await mine.hover();
   await mine.getByRole("button", { name: "👍" }).click();
-  await expect(messageRow(b.page, "Привет, Боб!").getByText("1")).toBeVisible();
+  await expect(messageRow(b.page, "Привет, Боб!").getByRole("button", { name: "👍 1" })).toBeVisible();
 
   // edit
   await mine.hover();

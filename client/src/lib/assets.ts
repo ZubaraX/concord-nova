@@ -1,6 +1,6 @@
 // Files the user picked for this device only (their own ringtone, a chat
-// wallpaper): kept in IndexedDB — too big for localStorage, not worth a server
-// round trip.
+// wallpaper, soundboard sounds and their icons): kept in IndexedDB — too big
+// for localStorage, not worth a server round trip.
 const DB = "nova-assets";
 const STORE = "files";
 
@@ -26,7 +26,7 @@ async function tx<T>(mode: IDBTransactionMode, run: (s: IDBObjectStore) => IDBRe
   }
 }
 
-export type AssetKey = "ringtone" | "wallpaper";
+export type AssetKey = "ringtone" | "wallpaper" | `sound:${string}` | `soundicon:${string}`;
 
 export const putAsset = (key: AssetKey, file: Blob) => tx("readwrite", (s) => s.put(file, key)).then(() => notify(key));
 export const getAsset = (key: AssetKey) => tx<Blob | undefined>("readonly", (s) => s.get(key)).catch(() => undefined);

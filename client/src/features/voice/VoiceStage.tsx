@@ -35,6 +35,7 @@ import { Slider } from "../../components/ui/primitives";
 import { UserAvatar } from "../../components/ui/avatar";
 import { toggleLocalMute, userMenu } from "../shell/menus";
 import { PingButton } from "./ConnectionStats";
+import { SoundboardButton } from "./Soundboard";
 import { flipCamera, isLocal, joinVoice, leaveVoice, sendReaction, toggleCamera, toggleDeafen, toggleMute, toggleScreen, trackFor, useVoice } from "./voice";
 import { useAura } from "./levels";
 
@@ -325,11 +326,12 @@ function Controls({
   const react = usePopover();
   const share = usePopover();
   const quality = useSettings((s) => s.screenQuality);
-  const btn = "flex h-12 w-12 items-center justify-center rounded-2xl transition-all duration-150 active:scale-95";
+  // Phones: smaller buttons, so the whole row (now with the soundboard) fits the screen.
+  const btn = clsx("flex shrink-0 items-center justify-center rounded-2xl transition-all duration-150 active:scale-95", mobile ? "h-10 w-10" : "h-12 w-12");
   const neutral = "bg-raised text-fg hover:bg-overlay";
   return (
     <div className={clsx("pointer-events-none absolute inset-x-0 bottom-0 flex justify-center", compact ? "pb-2" : "pb-5")}>
-      <div className="glass pointer-events-auto flex items-center gap-2 rounded-[22px] p-2 shadow-lift">
+      <div className={clsx("glass pointer-events-auto flex max-w-[calc(100%-8px)] items-center overflow-x-auto rounded-[22px] p-2 shadow-lift [scrollbar-width:none] [&::-webkit-scrollbar]:hidden", mobile ? "gap-1.5" : "gap-2")}>
         <Tooltip content={v.muted ? t("voice.unmute") : t("voice.mute")}>
           <button onClick={toggleMute} className={clsx(btn, v.muted || v.deafened ? "bg-bad/20 text-bad" : neutral)} aria-label={t("voice.mute")}>
             {v.muted || v.deafened ? <MicOff size={21} /> : <Mic size={21} />}
@@ -371,6 +373,7 @@ function Controls({
             <SmilePlus size={21} />
           </button>
         </Tooltip>
+        <SoundboardButton className={clsx(btn, neutral)} />
         {onToggleChat && (
           <Tooltip content={t("voice.chat")}>
             <button onClick={onToggleChat} className={clsx(btn, chatOpen ? "bg-star/25 text-star" : neutral)} aria-label={t("voice.chat")}>
@@ -393,7 +396,7 @@ function Controls({
           </Tooltip>
         )}
         <Tooltip content={t("voice.disconnect")}>
-          <button onClick={() => void leaveVoice()} className={clsx(btn, "w-16 bg-bad text-white hover:brightness-110")} aria-label={t("voice.disconnect")}>
+          <button onClick={() => void leaveVoice()} className={clsx(btn, mobile ? "!w-[52px]" : "!w-16", "bg-bad text-white hover:brightness-110")} aria-label={t("voice.disconnect")}>
             <PhoneOff size={22} />
           </button>
         </Tooltip>

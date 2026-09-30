@@ -19,6 +19,7 @@ import { ScreenPickerModal } from "./ScreenPicker";
 import { ChannelSettingsModal } from "./ChannelSettings";
 
 const UserSettings = lazy(() => import("../settings/UserSettings"));
+const SoundModal = lazy(() => import("../voice/Soundboard").then((m) => ({ default: m.SoundModal })));
 const GuildSettings = lazy(() => import("../settings/GuildSettings"));
 
 const noop = () => {};
@@ -71,6 +72,8 @@ function render(m: ModalState, close: () => void) {
       return <TimeoutModal guildId={m.guildId} userId={m.userId} onClose={close} />;
     case "nick":
       return <NickModal guildId={m.guildId} userId={m.userId} onClose={close} />;
+    case "sound":
+      return <SoundModal id={m.id} onClose={close} />;
     case "screenPicker":
       return <ScreenPickerModal resolve={m.resolve} onClose={close} />;
     default:
