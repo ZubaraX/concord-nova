@@ -234,7 +234,21 @@ export const settingsSchema = z.record(z.string(), z.unknown());
 export const instanceSettingsSchema = z.object({
   registration: z.enum(["open", "invite", "closed"]).optional(),
   serverName: z.string().trim().min(1).max(64).optional(),
+  /** KLIPY app key; "" turns GIF search off. */
+  gifKey: z.string().trim().max(128).regex(/^[A-Za-z0-9_-]*$/, "invalid_key").optional(),
 });
+
+// ── favourite GIFs ─────────────────────────────────────────────────────────
+/** An absolute http(s) URL, or a file on this server. */
+const zGifUrl = z.string().max(2000).regex(/^(https?:\/\/[^\s/]+\/|\/files\/|\/media-proxy\?)\S*$/i, "invalid_url");
+export const favoriteGifSchema = z.object({
+  url: zGifUrl,
+  preview: zGifUrl.nullable().optional(),
+  width: z.number().int().min(1).max(10_000).nullable().optional(),
+  height: z.number().int().min(1).max(10_000).nullable().optional(),
+});
+export const favoriteGifRemoveSchema = z.object({ url: z.string().max(2000) });
+export const MAX_FAVORITE_GIFS = 500;
 export const adminFlagSchema = z.object({ value: z.boolean() });
 export const adminTransferSchema = z.object({ userId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/) });
 

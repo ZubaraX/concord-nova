@@ -4,9 +4,10 @@ import type { RegistrationMode } from "@nova/shared";
 import { prisma } from "../db";
 import { config } from "../config";
 
-const state: { registration: RegistrationMode; serverName: string } = {
+const state: { registration: RegistrationMode; serverName: string; gifKey: string } = {
   registration: config.REGISTRATION,
   serverName: config.SERVER_NAME,
+  gifKey: config.KLIPY_KEY.trim(),
 };
 
 export const instance = {
@@ -16,12 +17,17 @@ export const instance = {
   get serverName(): string {
     return state.serverName;
   },
+  /** KLIPY app key for GIF search; "" = search is off. */
+  get gifKey(): string {
+    return state.gifKey;
+  },
 };
 
 export async function loadInstanceSettings() {
   for (const r of await prisma.instanceSetting.findMany()) {
     if (r.key === "registration" && (r.value === "open" || r.value === "invite" || r.value === "closed")) state.registration = r.value;
     if (r.key === "serverName" && r.value.trim()) state.serverName = r.value.trim();
+    if (r.key === "gifKey") state.gifKey = r.value.trim();
   }
 }
 

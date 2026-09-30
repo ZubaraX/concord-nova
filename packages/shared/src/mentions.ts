@@ -53,6 +53,20 @@ export function extractUrls(content: string, max = 5): string[] {
   return out;
 }
 
+const GIF_HOST_RE = /(^|\.)(klipy|tenor|giphy)\.com$/i;
+
+/** Is the whole message one link to a GIF — what the GIF picker sends? Previews say "GIF" instead of the address. */
+export function isGifLink(content: string): boolean {
+  const s = (content ?? "").trim();
+  if (!/^https?:\/\/\S+$/i.test(s)) return false;
+  try {
+    const u = new URL(s);
+    return GIF_HOST_RE.test(u.hostname) || /\.gif$/i.test(u.pathname);
+  } catch {
+    return false;
+  }
+}
+
 /** Reaction emoji key: a unicode emoji, or `name:id` for a custom emoji. */
 export function reactionKey(emoji: { id?: string | null; name: string }): string {
   return emoji.id ? `${emoji.name}:${emoji.id}` : emoji.name;

@@ -4,7 +4,7 @@
 // settings, DND, blocks — and skipping phones while the user is active at a
 // computer (like Discord does).
 import type { ServerResponse } from "node:http";
-import { RelationshipType, type MessageDTO } from "@nova/shared";
+import { RelationshipType, isGifLink, type MessageDTO } from "@nova/shared";
 import { prisma } from "../db";
 import { presence } from "../state/presence";
 import { cache } from "../state/cache";
@@ -64,6 +64,7 @@ export function pushToUser(userId: string, ev: PushEvent) {
 
 function preview(m: MessageDTO): string {
   if (m.poll) return `📊 ${m.poll.question}`;
+  if (isGifLink(m.content)) return "GIF";
   const text = m.content
     .replace(/<@!?([0-9A-Z]{26})>/g, "@…")
     .replace(/<@&[0-9A-Z]{26}>/g, "@роль")

@@ -27,6 +27,7 @@ import { buildPoll, channelInclude, loadMessage, messageInclude, toChannel as to
 import { scheduleEmbeds } from "./embeds";
 import { pushForMessage } from "./push";
 import { audit } from "./audit";
+import { forgetFiles } from "./gifs";
 
 export const normalizeSearch = (s: string) => s.toLowerCase().replace(/ё/g, "е");
 
@@ -299,6 +300,7 @@ export async function editMessage(userId: string, messageId: string, content: st
 
 async function removeFiles(paths: string[]) {
   for (const p of paths) await deleteStored(p);
+  await forgetFiles(paths).catch(() => {});
 }
 
 export async function deleteMessage(userId: string, messageId: string, reason?: string) {

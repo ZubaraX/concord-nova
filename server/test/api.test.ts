@@ -500,6 +500,78 @@ describe("profile style", () => {
   });
 });
 
+describe("gifs", () => {
+  it("search is off until an admin sets a provider key; only signed-in apps get the key", async () => {
+    const user = await register("gifuser");
+    expect((await api("GET", "/api/gifs/config")).status).toBe(401);
+    expect((await api("GET", "/api/gifs/config", user.token)).body).toEqual({ provider: null, key: null });
+    expect((await api("GET", "/api/auth/info")).body.gifs).toBe(false);
+
+    expect((await api("PUT", "/api/admin/settings", user.token, { gifKey: "abc" })).status).toBe(403);
+    expect((await api("PUT", "/api/admin/settings", alice.token, { gifKey: "not a key!" })).status).toBe(400);
+    const set = await api("PUT", "/api/admin/settings", alice.token, { gifKey: " Test_key-123 " });
+    expect(set.status).toBe(200);
+    expect(set.body.gifKey).toBe("Test_key-123");
+
+    const info = await api("GET", "/api/auth/info");
+    expect(info.body.gifs).toBe(true);
+    expect(JSON.stringify(info.body)).not.toContain("Test_key-123");
+    expect((await api("GET", "/api/gifs/config", user.token)).body).toEqual({ provider: "klipy", key: "Test_key-123" });
+    expect((await api("GET", "/api/admin/overview", alice.token)).body.gifKey).toBe("Test_key-123");
+
+    // An empty key turns search off again.
+    expect((await api("PUT", "/api/admin/settings", alice.token, { gifKey: "" })).status).toBe(200);
+    expect((await api("GET", "/api/auth/info")).body.gifs).toBe(false);
+  });
+
+  it("favourites: star, newest first, live on other devices, unstar", async () => {
+    const user = await register("gifstar");
+    const other = await live(user);
+    const a = { url: "https://static.klipy.com/ii/aa/bb/one.webp", preview: "https://static.klipy.com/ii/aa/bb/one-sm.webp", width: 498, height: 280 };
+    const b = { url: "https://example.com/two.gif" };
+    expect((await api("PUT", "/api/users/@me/gifs", user.token, a)).body).toEqual({ id: a.url, ...a });
+    expect((await api("PUT", "/api/users/@me/gifs", user.token, b)).body).toEqual({ id: b.url, url: b.url, preview: b.url, width: null, height: null });
+    expect((await other.waitFor("USER_GIFS_UPDATE", (d) => d.added?.url === b.url)).added?.preview).toBe(b.url);
+
+    const list = await api<{ url: string }[]>("GET", "/api/users/@me/gifs", user.token);
+    expect(list.body.map((g) => g.url)).toEqual([b.url, a.url]);
+    // Starring twice keeps one copy and moves it to the top.
+    await sleep(5);
+    await api("PUT", "/api/users/@me/gifs", user.token, a);
+    expect((await api<{ url: string }[]>("GET", "/api/users/@me/gifs", user.token)).body.map((g) => g.url)).toEqual([a.url, b.url]);
+    // Somebody else's list is their own.
+    expect((await api("GET", "/api/users/@me/gifs", alice.token)).body).toEqual([]);
+
+    for (const url of ["javascript:alert(1)", "data:image/gif;base64,AAAA", "//evil.example/x.gif", ""]) {
+      expect((await api("PUT", "/api/users/@me/gifs", user.token, { url })).status, url).toBe(400);
+    }
+
+    expect((await api("DELETE", `/api/users/@me/gifs?url=${encodeURIComponent(a.url)}`, user.token)).status).toBe(204);
+    await other.waitFor("USER_GIFS_UPDATE", (d) => d.removed === a.url);
+    expect((await api<{ url: string }[]>("GET", "/api/users/@me/gifs", user.token)).body.map((g) => g.url)).toEqual([b.url]);
+  });
+
+  it("an uploaded GIF re-sent from favourites is shown from this server and leaves favourites with its file", async () => {
+    const aLive = await live(alice);
+    const gif = await sharp({ create: { width: 120, height: 90, channels: 3, background: { r: 20, g: 160, b: 220 } } }).gif().toBuffer();
+    const form = new FormData();
+    form.append("file", new Blob([new Uint8Array(gif)], { type: "image/gif" }), "кот.gif");
+    const att = await (await fetch(base + "/api/attachments", { method: "POST", headers: { authorization: `Bearer ${alice.token}` }, body: form })).json();
+    expect(att.contentType).toBe("image/gif");
+    const first = await api<MessageDTO>("POST", `/api/channels/${general}/messages`, alice.token, { content: "", attachments: [att.id] });
+    expect((await api("PUT", "/api/users/@me/gifs", alice.token, { url: att.url, width: att.width, height: att.height })).status).toBe(200);
+
+    // The favourite goes out as a plain link; the preview is the file itself — not fetched, not proxied.
+    const again = await api<MessageDTO>("POST", `/api/channels/${general}/messages`, alice.token, { content: base + att.url });
+    const updated = await aLive.waitFor("MESSAGE_UPDATE", (d) => d.id === again.body.id && d.embeds.length > 0);
+    expect(updated.embeds[0]).toMatchObject({ type: "image", url: base + att.url, image: { url: att.url, width: 120, height: 90 } });
+
+    expect((await api("DELETE", `/api/channels/${general}/messages/${first.body.id}`, alice.token)).status).toBeLessThan(300);
+    await aLive.waitFor("USER_GIFS_UPDATE", (d) => d.removed === att.url);
+    expect((await api("GET", "/api/users/@me/gifs", alice.token)).body).toEqual([]);
+  });
+});
+
 describe("apps and links", () => {
   // The desktop app (app://nova) and the Android WebView call the API cross-origin:
   // every method the client uses must pass the CORS preflight.

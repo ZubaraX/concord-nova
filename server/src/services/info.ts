@@ -19,7 +19,7 @@ export function serverInfo(): ServerInfoDTO {
     name: instance.serverName,
     version: config.version,
     voice: { enabled: voiceEnabled(), url: config.livekit.publicUrl || null },
-    gifs: !!(config.KLIPY_KEY || config.TENOR_KEY),
+    gifs: !!instance.gifKey,
     maxUploadBytes: config.MAX_UPLOAD_BYTES,
     maxMessageLength: config.MAX_MESSAGE_LENGTH,
     registration: instance.registration,

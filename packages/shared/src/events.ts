@@ -7,6 +7,7 @@ import type {
   ChannelDTO,
   ChosenStatus,
   EmojiDTO,
+  GifDTO,
   GuildBaseDTO,
   GuildDTO,
   MemberDTO,
@@ -33,6 +34,8 @@ export interface DispatchMap {
   USER_UPDATE: UserDTO;
   SELF_UPDATE: SelfUserDTO;
   USER_SETTINGS_UPDATE: { settings: Record<string, unknown> };
+  /** Favourite GIFs changed on another device. */
+  USER_GIFS_UPDATE: { added?: GifDTO; removed?: string };
   NOTIFICATION_SETTINGS_UPDATE: { settings: NotificationSettingDTO[] };
 
   GUILD_CREATE: GuildCreatePayload;

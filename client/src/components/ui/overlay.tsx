@@ -144,9 +144,10 @@ export function Popover({
   const [pos, setPos] = useState<{ x: number; y: number; side: string } | null>(null);
 
   useLayoutEffect(() => {
-    if (!anchor || !ref.current) return;
-    const r = ref.current.getBoundingClientRect();
-    setPos(place(anchor, r.width, r.height, placement, gap));
+    if (!anchor || !ref.current) return setPos(null);
+    // Layout size, not the painted box: a reopened popover is already mid pop-in
+    // (scaled down), and measuring that put it a few pixels off its anchor.
+    setPos(place(anchor, ref.current.offsetWidth, ref.current.offsetHeight, placement, gap));
   }, [anchor, placement, gap]);
 
   useEffect(() => {

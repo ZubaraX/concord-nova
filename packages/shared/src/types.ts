@@ -354,6 +354,8 @@ export interface AdminOverviewDTO {
   uptimeSec: number;
   serverName: string;
   registration: RegistrationMode;
+  /** KLIPY app key for GIF search ("" = search is off). */
+  gifKey: string;
   users: number;
   usersDisabled: number;
   admins: number;
@@ -426,10 +428,20 @@ export interface SearchResultDTO {
 
 export interface GifDTO {
   id: string;
+  /** What gets sent: an absolute media URL, or a path on this server (`/files/…`) for an uploaded GIF. */
   url: string;
+  /** A lighter rendition for the picker grid. */
   preview: string;
   width: number | null;
   height: number | null;
+  /** Provider slug — reported back when the GIF is sent. */
+  slug?: string;
+}
+
+/** GIF search runs in the apps, straight against the provider; the server only hands out the app key. */
+export interface GifConfigDTO {
+  provider: "klipy" | null;
+  key: string | null;
 }
 
 export interface ApiErrorBody {

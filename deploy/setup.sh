@@ -122,9 +122,9 @@ REGISTRATION=open
 LIVEKIT_API_KEY=${LK_KEY}
 LIVEKIT_API_SECRET=${LK_SECRET}
 LIVEKIT_INTERNAL_URL=http://127.0.0.1:7880
-# Optional: GIF search (https://klipy.com / Tenor) and password-reset mail.
+# Optional: GIF search (a key from https://partner.klipy.com — or set it in the
+# app: Settings → Nova server) and password-reset mail.
 KLIPY_KEY=
-TENOR_KEY=
 SMTP_HOST=
 SMTP_PORT=587
 SMTP_USER=

@@ -47,8 +47,8 @@ const schema = z.object({
   LIVEKIT_API_KEY: z.string().default(""),
   LIVEKIT_API_SECRET: z.string().default(""),
 
+  /** KLIPY app key for GIF search — the default; admins can set it in the app. */
   KLIPY_KEY: z.string().default(""),
-  TENOR_KEY: z.string().default(""),
 
   SMTP_HOST: z.string().default(""),
   SMTP_PORT: z.coerce.number().int().default(587),

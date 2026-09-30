@@ -2,7 +2,7 @@ import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { useShallow } from "zustand/react/shallow";
 import clsx from "clsx";
 import { Download, FileText, Play, Pause, SmilePlus, MessagesSquare, Check } from "lucide-react";
-import { AttachmentFlags, formatBytes, parseReactionKey, type AttachmentDTO, type EmbedDTO, type MessageDTO, type PollDTO, type ReactionDTO } from "@nova/shared";
+import { AttachmentFlags, MessageFlags, formatBytes, parseReactionKey, type AttachmentDTO, type EmbedDTO, type MessageDTO, type PollDTO, type ReactionDTO } from "@nova/shared";
 import { api } from "../../lib/api";
 import { errorText, t } from "../../lib/i18n";
 import { toast } from "../../lib/bus";
@@ -13,6 +13,8 @@ import { useUI } from "../../store/ui";
 import { useSettings } from "../../store/settings";
 import { Popover, Tooltip, usePopover } from "../../components/ui/overlay";
 import { EmojiPicker } from "./EmojiPicker";
+import { FavoriteStar } from "./GifPicker";
+import { instantGif, knownGifSize, loneUrl, looksLikeGif } from "../../lib/gifs";
 import { openLink } from "./markdown";
 
 // ── attachments ─────────────────────────────────────────────────────────────
@@ -69,10 +71,8 @@ function MediaItem({ a, single, onOpen }: { a: AttachmentDTO; single?: boolean; 
   const animate = useSettings((s) => s.animateEmoji);
   const size = single ? fit(a.width, a.height, Math.min(520, window.innerWidth - 110), 360) : null;
   const gif = a.contentType === "image/gif";
-  const el = isVideo(a) ? (
-    <video src={mediaUrl(a.url)} controls preload="metadata" className="max-h-[360px] max-w-full rounded-xl bg-canvas" style={size ?? undefined} />
-  ) : (
-    <button onClick={onOpen} className={clsx("block overflow-hidden rounded-xl bg-raised", !single && "aspect-square")} style={size ?? undefined}>
+  const image = (
+    <button onClick={onOpen} className={clsx("block overflow-hidden rounded-xl bg-raised", !single && "aspect-square w-full")} style={size ?? undefined}>
       <img
         src={gif && animate ? mediaUrl(a.url) : mediaUrl(a.url, single ? (size?.width ?? 520) : 260)}
         alt={a.filename}
@@ -82,6 +82,16 @@ function MediaItem({ a, single, onOpen }: { a: AttachmentDTO; single?: boolean; 
         className="h-full w-full object-cover transition-transform duration-300 hover:scale-[1.02]"
       />
     </button>
+  );
+  const el = isVideo(a) ? (
+    <video src={mediaUrl(a.url)} controls preload="metadata" className="max-h-[360px] max-w-full rounded-xl bg-canvas" style={size ?? undefined} />
+  ) : gif ? (
+    <div className={clsx("group/gif relative", single && "w-fit max-w-full")}>
+      {image}
+      <FavoriteStar gif={{ url: a.url, width: a.width, height: a.height }} />
+    </div>
+  ) : (
+    image
   );
   return a.flags & AttachmentFlags.SPOILER ? <SpoilerCover>{el}</SpoilerCover> : el;
 }
@@ -178,6 +188,59 @@ function VoicePlayer({ a }: { a: AttachmentDTO }) {
 }
 
 // ── embeds ──────────────────────────────────────────────────────────────────
+export interface LoneMedia {
+  /** The link text is left out: the picture says it all. */
+  hideText: boolean;
+  /** Shown by the app itself, before (or without) the server's preview. */
+  instant: { src: string; key: string; link: string } | null;
+}
+const NO_LONE: LoneMedia = { hideText: false, instant: null };
+
+/** A message that is nothing but a link to a GIF or a picture — what the GIF picker sends. */
+export function useLoneMedia(m: MessageDTO): LoneMedia {
+  const show = useSettings((s) => s.showEmbeds);
+  return useMemo(() => {
+    if (!show || m.flags & MessageFlags.SUPPRESS_EMBEDS) return NO_LONE;
+    const link = loneUrl(m.content);
+    if (!link) return NO_LONE;
+    if (m.embeds.some((e) => e.url === link && ((e.type === "image" && e.image) || (e.type === "gifv" && e.video)))) return { hideText: true, instant: null };
+    const instant = instantGif(link);
+    return instant ? { hideText: true, instant: { ...instant, link } } : NO_LONE;
+  }, [show, m.flags, m.content, m.embeds]);
+}
+
+export function InstantGif({ src, link, favKey }: { src: string; link: string; favKey: string }) {
+  const [dims, setDims] = useState(() => knownGifSize(link));
+  const [failed, setFailed] = useState(false);
+  const url = mediaUrl(src)!;
+  if (failed) {
+    return (
+      <a href={link} target="_blank" rel="noreferrer noopener" onClick={(e) => openLink(link, e)} className="break-all text-[15.5px] text-sky hover:underline">
+        {link}
+      </a>
+    );
+  }
+  return (
+    <div className="group/gif relative mt-1 w-fit max-w-full">
+      <button
+        onClick={() => useUI.setState({ lightbox: { index: 0, items: [{ url, type: "image", width: dims?.width, height: dims?.height }] } })}
+        className="block max-w-full overflow-hidden rounded-xl bg-raised"
+        style={fit(dims?.width ?? null, dims?.height ?? null, 420, 320)}
+      >
+        <img
+          src={url}
+          alt=""
+          draggable={false}
+          onLoad={(e) => !dims && setDims({ width: e.currentTarget.naturalWidth, height: e.currentTarget.naturalHeight })}
+          onError={() => setFailed(true)}
+          className={clsx("h-full w-full", dims ? "object-cover" : "object-contain")}
+        />
+      </button>
+      <FavoriteStar gif={{ url: favKey, width: dims?.width, height: dims?.height }} />
+    </div>
+  );
+}
+
 export const Embeds = memo(function Embeds({ items }: { items: EmbedDTO[] }) {
   const show = useSettings((s) => s.showEmbeds);
   if (!show) return null;
@@ -194,19 +257,29 @@ function Embed({ e }: { e: EmbedDTO }) {
   const [playing, setPlaying] = useState(false);
   if (e.type === "image" && e.image) {
     const size = fit(e.image.width ?? null, e.image.height ?? null, 420, 320);
+    // Uploaded files are starred by their path on this server, everything else by its link.
+    const own = e.image.url.startsWith("/files/");
     return (
-      <button
-        onClick={() => useUI.setState({ lightbox: { index: 0, items: [{ url: mediaUrl(e.image!.url)!, type: "image", width: e.image!.width, height: e.image!.height }] } })}
-        className="block overflow-hidden rounded-xl bg-raised"
-        style={size}
-      >
-        <img src={mediaUrl(e.image.url)} alt="" loading="lazy" className="h-full w-full object-cover" />
-      </button>
+      <div className="group/gif relative w-fit max-w-full">
+        <button
+          onClick={() => useUI.setState({ lightbox: { index: 0, items: [{ url: mediaUrl(e.image!.url)!, type: "image", width: e.image!.width, height: e.image!.height }] } })}
+          className="block max-w-full overflow-hidden rounded-xl bg-raised"
+          style={size}
+        >
+          <img src={mediaUrl(e.image.url)} alt="" loading="lazy" className="h-full w-full object-cover" />
+        </button>
+        {looksLikeGif(e.url) && <FavoriteStar gif={{ url: own ? e.image.url : e.url, preview: own ? null : e.image.url, width: e.image.width, height: e.image.height }} />}
+      </div>
     );
   }
   if (e.type === "gifv" && e.video) {
     const size = fit(e.video.width ?? null, e.video.height ?? null, 400, 300);
-    return <video src={e.video.url} autoPlay loop muted playsInline className="rounded-xl bg-raised" style={size} poster={mediaUrl(e.thumbnail?.url)} />;
+    return (
+      <div className="group/gif relative w-fit max-w-full">
+        <video src={e.video.url} autoPlay loop muted playsInline className="max-w-full rounded-xl bg-raised" style={size} poster={mediaUrl(e.thumbnail?.url)} />
+        <FavoriteStar gif={{ url: e.url, preview: e.thumbnail?.url, width: e.video.width, height: e.video.height }} />
+      </div>
+    );
   }
   const color = e.color ? `#${e.color.toString(16).padStart(6, "0")}` : "rgb(var(--overlay))";
   return (

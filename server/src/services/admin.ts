@@ -81,6 +81,7 @@ export async function overview(): Promise<AdminOverviewDTO> {
     uptimeSec: Math.round(process.uptime()),
     serverName: instance.serverName,
     registration: instance.registration,
+    gifKey: instance.gifKey,
     users,
     usersDisabled,
     admins: Number(admins[0]?.n ?? 0),

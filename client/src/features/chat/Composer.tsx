@@ -8,6 +8,7 @@ import { bus, toast } from "../../lib/bus";
 import { gw } from "../../lib/gateway";
 import { errorText, t } from "../../lib/i18n";
 import { isTouch, isAndroid } from "../../lib/platform";
+import { gifLink, gifSent } from "../../lib/gifs";
 import { useIsMobile } from "../../lib/hooks";
 import { can, channelPerms, channelTitle, data, displayName, useData } from "../../store/data";
 import { lastOwnMessage, sendMessage } from "../../store/messages";
@@ -72,6 +73,7 @@ export function Composer({ channelId, placeholderOverride, compact }: { channelI
   const ta = useRef<HTMLTextAreaElement>(null);
   const plus = usePopover();
   const emoji = usePopover();
+  const [pickerTab, setPickerTab] = useState<"emoji" | "gif">("emoji");
 
   const canSend = can(bits, Permission.SEND_MESSAGES) && !blocked;
   const canAttach = can(bits, Permission.ATTACH_FILES);
@@ -193,9 +195,10 @@ export function Composer({ channelId, placeholderOverride, compact }: { channelI
   }, [queued, uploading, send]);
   useEffect(() => setQueued(null), [channelId]);
 
-  const sendGif = (g: GifDTO) => {
+  const sendGif = (g: GifDTO, query: string) => {
     if (!canSend) return;
-    sendMessage(channelId, { content: g.url, replyTo: replyTo?.id });
+    sendMessage(channelId, { content: gifLink(g), replyTo: replyTo?.id });
+    gifSent(g, query);
     useUI.setState({ replyTo: { ...useUI.getState().replyTo, [channelId]: undefined } });
   };
 
@@ -368,7 +371,26 @@ export function Composer({ channelId, placeholderOverride, compact }: { channelI
             />
             {slowLeft > 0 && <span className="mb-3 flex shrink-0 items-center gap-1 text-[12px] tabular-nums text-fg-3"><Clock size={13} /> {slowLeft}</span>}
             {text.length > maxLen - 500 && <span className={clsx("mb-3 shrink-0 text-[12px] tabular-nums", text.length > maxLen - 50 ? "text-bad" : "text-fg-3")}>{maxLen - text.length}</span>}
-            <button disabled={!canSend} onClick={emoji.toggle} className="mb-1.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-fg-2 transition-[color,transform] hover:scale-110 hover:text-star disabled:opacity-40" aria-label={t("chat.emoji")}>
+            <button
+              disabled={!canSend}
+              onClick={(e) => {
+                setPickerTab("gif");
+                emoji.toggle(e);
+              }}
+              className="mb-1.5 flex h-8 shrink-0 items-center justify-center rounded-lg px-1 text-fg-2 transition-[color,transform] hover:scale-110 hover:text-star disabled:opacity-40"
+              aria-label={t("chat.gif")}
+            >
+              <span className="rounded-[5px] border-[1.5px] border-current px-1 text-[10.5px] font-extrabold leading-[15px] tracking-wide">GIF</span>
+            </button>
+            <button
+              disabled={!canSend}
+              onClick={(e) => {
+                setPickerTab("emoji");
+                emoji.toggle(e);
+              }}
+              className="mb-1.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-fg-2 transition-[color,transform] hover:scale-110 hover:text-star disabled:opacity-40"
+              aria-label={t("chat.emoji")}
+            >
               <Smile size={21} />
             </button>
             {hasContent || !can(bits, Permission.SEND_VOICE_MESSAGES) ? (
@@ -409,6 +431,7 @@ export function Composer({ channelId, placeholderOverride, compact }: { channelI
       <Popover anchor={emoji.anchor} onClose={emoji.close} placement="top-end">
         <EmojiPicker
           tabs={["emoji", "gif"]}
+          initialTab={pickerTab}
           closeOnPick={false}
           onClose={emoji.close}
           onPick={(e) => {

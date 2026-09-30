@@ -3,6 +3,8 @@ import { z } from "zod";
 import {
   RelationshipType,
   accountUpdateSchema,
+  favoriteGifRemoveSchema,
+  favoriteGifSchema,
   groupDmCreateSchema,
   notificationSettingSchema,
   profileUpdateSchema,
@@ -16,6 +18,7 @@ import { authenticate } from "../lib/auth";
 import { badRequest, notFound, parse } from "../lib/errors";
 import * as users from "../services/users";
 import * as rel from "../services/relationships";
+import * as gifs from "../services/gifs";
 import { createGroupDm, openDm } from "../services/channels";
 import { leaveGuild } from "../services/guilds";
 import { listBookmarks, recentMentions, setBookmark } from "../services/messages";
@@ -34,6 +37,13 @@ export async function userRoutes(app: FastifyInstance) {
   app.put("/@me/settings", async (req) => {
     await users.putSettings(req.auth.userId, parse(settingsSchema, req.body));
     return { ok: true };
+  });
+
+  app.get("/@me/gifs", async (req) => gifs.listFavoriteGifs(req.auth.userId));
+  app.put("/@me/gifs", async (req) => gifs.addFavoriteGif(req.auth.userId, parse(favoriteGifSchema, req.body)));
+  app.delete("/@me/gifs", async (req, reply) => {
+    await gifs.removeFavoriteGif(req.auth.userId, parse(favoriteGifRemoveSchema, req.query).url);
+    return reply.code(204).send();
   });
 
   app.patch("/@me/status", async (req) => users.setStatus(req.auth.userId, parse(statusSchema, req.body)));

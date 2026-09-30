@@ -11,6 +11,7 @@ import { bus } from "./bus";
 import { applyDispatch } from "../store/data";
 import * as msgs from "../store/messages";
 import { settings } from "../store/settings";
+import { loadFavorites, onGifsEvent } from "./gifs";
 
 export type ConnState = "connecting" | "ready" | "reconnecting" | "offline";
 
@@ -37,6 +38,7 @@ function handle(e: DispatchEvent) {
       settings().hydrateSynced(e.d.settings ?? {});
       if (!first) void msgs.resyncAll();
       if (focusChannel) socket?.emit("focus", focusChannel);
+      void loadFavorites();
       bus.emit("ready", { first });
       break;
     }
@@ -66,6 +68,9 @@ function handle(e: DispatchEvent) {
       break;
     case "USER_SETTINGS_UPDATE":
       settings().hydrateSynced(e.d.settings);
+      break;
+    case "USER_GIFS_UPDATE":
+      onGifsEvent(e.d);
       break;
     case "SESSION_INVALIDATE":
       tokens.clear();

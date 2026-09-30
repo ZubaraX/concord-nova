@@ -9,6 +9,8 @@ import { errorText, getLocale, t } from "../../lib/i18n";
 import { toast } from "../../lib/bus";
 import { fmtDate, fmtDuration, fmtRelative } from "../../lib/time";
 import { useDebounced } from "../../lib/hooks";
+import { checkGifKey, forgetGifConfig } from "../../lib/gifs";
+import { openLink } from "../chat/markdown";
 import { useData } from "../../store/data";
 import { confirmDialog } from "../../store/ui";
 import { settings } from "../../store/settings";
@@ -125,23 +127,39 @@ export function AdminOverview() {
 
 function InstanceSettings({ data, onChange }: { data: AdminOverviewDTO; onChange: (d: AdminOverviewDTO) => void }) {
   const [name, setName] = useState(data.serverName);
+  const [gifKey, setGifKey] = useState(data.gifKey ?? "");
   const [busy, setBusy] = useState(false);
-  const save = async (patch: { serverName?: string; registration?: RegistrationMode }) => {
+  /** `note` replaces the usual "Saved" when there is something to add. */
+  const save = async (patch: { serverName?: string; registration?: RegistrationMode; gifKey?: string }, note?: string) => {
     setBusy(true);
     try {
-      const r = await api<{ serverName: string; registration: RegistrationMode }>("/api/admin/settings", { method: "PUT", body: patch });
-      onChange({ ...data, ...r });
+      const r = await api<{ serverName: string; registration: RegistrationMode; gifKey?: string }>("/api/admin/settings", { method: "PUT", body: patch });
+      const next = { ...data, ...r, gifKey: r.gifKey ?? "" };
+      onChange(next);
       setName(r.serverName);
-      // The rest of this app (About, invites) reads the name from READY.
-      useData.setState((s) => (s.server ? { server: { ...s.server, name: r.serverName, registration: r.registration } } : {}));
-      toast(t("common.saved"), "success");
+      setGifKey(next.gifKey);
+      forgetGifConfig();
+      // The rest of this app (About, invites, the GIF picker) reads these from READY.
+      useData.setState((s) => (s.server ? { server: { ...s.server, name: r.serverName, registration: r.registration, gifs: !!next.gifKey } } : {}));
+      toast(note ?? t("common.saved"), note ? "info" : "success");
     } catch (e) {
       toast(errorText(e), "error");
     } finally {
       setBusy(false);
     }
   };
+  // The key is tried against KLIPY from here, the way the picker will use it, before it is saved.
+  const saveGifKey = async (value: string) => {
+    const key = value.trim();
+    if (!key) return save({ gifKey: "" });
+    setBusy(true);
+    const verdict = await checkGifKey(key);
+    setBusy(false);
+    if (verdict === "key") return toast(t("admin.gifKeyBad"), "error");
+    return save({ gifKey: key }, verdict === "ok" ? undefined : t(verdict === "rate" ? "admin.gifKeyRate" : "admin.gifKeyUnchecked"));
+  };
   const dirty = name.trim() !== data.serverName && !!name.trim();
+  const gifDirty = gifKey.trim() !== (data.gifKey ?? "");
   return (
     <Group title={t("admin.instance")}>
       <SettingRow title={t("admin.serverName")} hint={t("admin.serverNameHint")}>
@@ -164,6 +182,46 @@ function InstanceSettings({ data, onChange }: { data: AdminOverviewDTO; onChange
             { value: "closed", label: t("admin.registrationClosed") },
           ]}
         />
+      </SettingRow>
+      <SettingRow
+        title={
+          <span className="flex items-center gap-2">
+            {t("admin.gifSearch")}
+            <Badge tone={data.gifKey ? "star" : "plain"}>{data.gifKey ? t("admin.gifOn") : t("admin.gifOff")}</Badge>
+          </span>
+        }
+        hint={
+          <>
+            {t("admin.gifHint")}{" "}
+            <a href="https://partner.klipy.com" target="_blank" rel="noreferrer noopener" onClick={(e) => openLink("https://partner.klipy.com", e)} className="font-semibold text-sky hover:underline">
+              {t("admin.gifGetKey")}
+            </a>
+          </>
+        }
+      >
+        <div className="flex w-full max-w-[340px] gap-2">
+          <Input
+            value={gifKey}
+            maxLength={128}
+            placeholder={t("admin.gifKey")}
+            aria-label={t("admin.gifKey")}
+            spellCheck={false}
+            autoComplete="off"
+            onChange={(e) => setGifKey(e.target.value)}
+            onKeyDown={(e) => e.key === "Enter" && gifDirty && void saveGifKey(gifKey)}
+          />
+          {gifDirty ? (
+            <Button loading={busy} onClick={() => void saveGifKey(gifKey)} className="h-11">
+              {t("common.save")}
+            </Button>
+          ) : (
+            data.gifKey && (
+              <Button variant="secondary" loading={busy} onClick={() => void saveGifKey("")} className="h-11">
+                {t("admin.gifTurnOff")}
+              </Button>
+            )
+          )}
+        </div>
       </SettingRow>
     </Group>
   );

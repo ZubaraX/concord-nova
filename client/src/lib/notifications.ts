@@ -1,7 +1,7 @@
 // In-app notification policy: sounds, desktop notifications, taskbar badge.
 // Mirrors the server's push rules (DND, mutes, mention-only by default in
 // guilds) so every device behaves the same.
-import { MessageFlags, RelationshipType, type MessageDTO } from "@nova/shared";
+import { MessageFlags, RelationshipType, isGifLink, type MessageDTO } from "@nova/shared";
 import { bus } from "./bus";
 import { playSound } from "./sound";
 import { isAndroid, isDesktop } from "./platform";
@@ -33,6 +33,7 @@ function level(s: DataState, m: MessageDTO): "all" | "mentions" | "none" {
 
 function plain(m: MessageDTO, s: DataState): string {
   if (m.poll) return `📊 ${m.poll.question}`;
+  if (isGifLink(m.content)) return "GIF";
   const text = m.content
     .replace(/<@!?([0-9A-Z]{26})>/g, (_, id) => "@" + displayName(s, id, m.guildId))
     .replace(/<@&([0-9A-Z]{26})>/g, (_, id) => "@" + (m.guildId ? s.roles[m.guildId]?.[id]?.name ?? "role" : "role"))

@@ -7,6 +7,7 @@ import {
   extractMentions,
   extractUrls,
   hasPerm,
+  isGifLink,
   isUlid,
   parseReactionKey,
   reactionKey,
@@ -113,6 +114,15 @@ describe("mentions", () => {
   });
   it("urls skip <suppressed> links", () => {
     expect(extractUrls("see https://a.com/x, <https://b.com> and https://c.com.")).toEqual(["https://a.com/x", "https://c.com"]);
+  });
+  it("a message that is just a GIF link is recognised; anything more is text", () => {
+    expect(isGifLink("https://static.klipy.com/ii/ab/cd/hello.webp")).toBe(true);
+    expect(isGifLink(" https://chat.example.com/files/2026/09/01ABC/cat.gif \n")).toBe(true);
+    expect(isGifLink("https://tenor.com/view/cat-dance-gif-123")).toBe(true);
+    expect(isGifLink("look https://static.klipy.com/ii/ab/cd/hello.webp")).toBe(false);
+    expect(isGifLink("https://example.com/photo.png")).toBe(false);
+    expect(isGifLink("https://notklipy.com/x")).toBe(false);
+    expect(isGifLink("")).toBe(false);
   });
   it("reaction keys round-trip", () => {
     const id = ulid();

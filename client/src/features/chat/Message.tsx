@@ -21,7 +21,7 @@ import {
   AlertCircle,
   Hash,
 } from "lucide-react";
-import { MessageFlags, MessageType, Permission, RelationshipType, type MessageDTO } from "@nova/shared";
+import { MessageFlags, MessageType, Permission, RelationshipType, isGifLink, type MessageDTO } from "@nova/shared";
 import { api } from "../../lib/api";
 import { webLink } from "../../lib/server";
 import { errorText, t } from "../../lib/i18n";
@@ -35,7 +35,7 @@ import { settings, useSettings } from "../../store/settings";
 import { Popover, Tooltip, useContextMenu, useLongPress, usePopover, type MenuEntry } from "../../components/ui/overlay";
 import { UserAvatar } from "../../components/ui/avatar";
 import { Markdown, toPlain } from "./markdown";
-import { Attachments, Embeds, Poll, Reactions, ThreadChip, toggleReaction, ReactionEmoji } from "./MessageParts";
+import { Attachments, Embeds, InstantGif, Poll, Reactions, ThreadChip, toggleReaction, ReactionEmoji, useLoneMedia } from "./MessageParts";
 import { EmojiPicker } from "./EmojiPicker";
 import { tokensToText, textToTokens } from "./mentionText";
 import { joinVoice, useVoice } from "../voice/voice";
@@ -75,7 +75,7 @@ function ReplyPreview({ m }: { m: MessageDTO }) {
   const r = m.replyTo!;
   const name = useData((s) => (r.author ? displayName(s, r.author.id, m.guildId) : ""));
   const color = useData((s) => (r.author ? roleColor(s, m.guildId, r.author.id) : undefined));
-  const text = useData((s) => toPlain(r.content, { user: (id) => displayName(s, id, m.guildId), role: (id) => (m.guildId ? s.roles[m.guildId]?.[id]?.name ?? "" : ""), channel: (id) => s.channels[id]?.name ?? "" }));
+  const text = useData((s) => (isGifLink(r.content) ? "GIF" : toPlain(r.content, { user: (id) => displayName(s, id, m.guildId), role: (id) => (m.guildId ? s.roles[m.guildId]?.[id]?.name ?? "" : ""), channel: (id) => s.channels[id]?.name ?? "" })));
   return (
     <div className="relative mb-0.5 flex min-w-0 items-center gap-1.5 pl-[52px] text-[13px] text-fg-3">
       <span className="absolute left-[18px] top-[9px] h-3 w-[30px] rounded-tl-md border-l-2 border-t-2 border-fg-3/40" />
@@ -183,6 +183,7 @@ export const MessageRow = memo(function MessageRow({ m, grouped, me, highlight }
   const mentionsMe = useMentionsMe(m, me);
   const blocked = useData((s) => s.relationships[m.author.id]?.type === RelationshipType.BLOCKED);
   const compact = useSettings((s) => s.density === "compact");
+  const lone = useLoneMedia(m);
   const [showBlocked, setShowBlocked] = useState(false);
   const menu = useContextMenu();
   const reactPop = usePopover();
@@ -249,7 +250,7 @@ export const MessageRow = memo(function MessageRow({ m, grouped, me, highlight }
                   <AuthorName m={m} onClick={openProfile} />
                 </span>
               )}
-              {m.content && (
+              {m.content && !lone.hideText && (
                 <div className="min-w-0 text-[15.5px] leading-[1.42] text-fg">
                   <Markdown content={m.content} guildId={m.guildId} />
                   {m.editedAt && (
@@ -262,6 +263,7 @@ export const MessageRow = memo(function MessageRow({ m, grouped, me, highlight }
             </div>
           )}
           {m.attachments.length > 0 && <Attachments items={m.attachments} />}
+          {lone.instant && !editing && <InstantGif src={lone.instant.src} link={lone.instant.link} favKey={lone.instant.key} />}
           {m.embeds.length > 0 && !(m.flags & MessageFlags.SUPPRESS_EMBEDS) && <Embeds items={m.embeds} />}
           {m.poll && <Poll m={m} me={me} />}
           <ThreadChip m={m} />

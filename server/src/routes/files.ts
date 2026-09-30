@@ -1,11 +1,11 @@
 // Uploads (attachments + profile/guild images), file serving, the signed
-// external-image proxy, and GIF search.
+// external-image proxy, and the GIF search key.
 import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, unlink, writeFile, stat } from "node:fs/promises";
 import { basename, dirname, resolve } from "node:path";
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { AttachmentFlags, ulid, type GifDTO } from "@nova/shared";
+import { AttachmentFlags, ulid, type GifConfigDTO } from "@nova/shared";
 import { prisma } from "../db";
 import { config } from "../config";
 import { authenticate } from "../lib/auth";
@@ -33,6 +33,7 @@ import { sendFile } from "../lib/serve";
 import { safeFetch } from "../lib/ssrf";
 import { toAttachment } from "../services/serialize";
 import { verifyProxy } from "../services/embeds";
+import { instance } from "../services/instance";
 
 const MIME_RE = /^[\w.+-]+\/[\w.+-]+$/;
 
@@ -178,76 +179,13 @@ export async function fileRoutes(app: FastifyInstance) {
     return sendFile(req, reply, file, type, headers);
   });
 
-  // ── GIF search (KLIPY, or Tenor as a fallback) ──
-  app.get("/api/gifs/search", { preHandler: authenticate }, async (req) => {
-    const { q, page } = parse(z.object({ q: z.string().max(100).optional(), page: z.coerce.number().int().min(1).max(50).optional() }), req.query);
-    const query = (q ?? "").trim();
-    const pg = page ?? 1;
-    try {
-      if (config.KLIPY_KEY) return { results: await klipy(config.KLIPY_KEY, query, req.auth.userId, pg), page: pg };
-      if (config.TENOR_KEY) return { results: pg === 1 ? await tenor(config.TENOR_KEY, query) : [], page: pg };
-    } catch (err) {
-      req.log.warn({ err }, "gif search failed");
-    }
-    return { results: [] as GifDTO[], page: pg };
+  // ── GIF search ──
+  // KLIPY wants searches and media loads to come from the app itself, not from
+  // a server in between, so signed-in clients get the app key and ask directly.
+  app.get("/api/gifs/config", { preHandler: authenticate }, async (): Promise<GifConfigDTO> => {
+    const key = instance.gifKey;
+    return { provider: key ? "klipy" : null, key: key || null };
   });
 
   void storageDir;
-}
-
-async function getJson(url: string): Promise<unknown> {
-  let last: unknown;
-  for (let i = 0; i < 2; i++) {
-    try {
-      const r = await fetch(url, { signal: AbortSignal.timeout(6000), headers: { accept: "application/json", "user-agent": "ConcordNova/1.0" } });
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return await r.json();
-    } catch (e) {
-      last = e;
-    }
-  }
-  throw last;
-}
-
-interface KlipyMedia {
-  url?: string;
-  width?: number;
-  height?: number;
-}
-type KlipyFile = Record<string, Record<string, KlipyMedia> | undefined>;
-
-async function klipy(key: string, q: string, customerId: string, page: number): Promise<GifDTO[]> {
-  const base = `https://api.klipy.com/api/v1/${encodeURIComponent(key)}/gifs`;
-  const params = `per_page=30&page=${page}&customer_id=${encodeURIComponent(customerId)}&rating=pg-13&locale=ru`;
-  const url = q ? `${base}/search?${params}&q=${encodeURIComponent(q)}` : `${base}/trending?${params}`;
-  const j = (await getJson(url)) as { data?: { data?: { id?: string | number; slug?: string; file?: KlipyFile }[] } };
-  const pick = (f: KlipyFile | undefined, sizes: string[]) => {
-    for (const s of sizes) for (const fmt of ["gif", "webp"]) {
-      const m = f?.[s]?.[fmt];
-      if (m?.url) return m;
-    }
-    return undefined;
-  };
-  return (j.data?.data ?? [])
-    .map((it) => {
-      const full = pick(it.file, ["md", "hd", "sm", "xs"]);
-      const prev = pick(it.file, ["sm", "xs", "md"]);
-      return { id: String(it.id ?? it.slug ?? ""), url: full?.url ?? "", preview: prev?.url ?? full?.url ?? "", width: full?.width ?? null, height: full?.height ?? null };
-    })
-    .filter((g) => g.url);
-}
-
-async function tenor(key: string, q: string): Promise<GifDTO[]> {
-  const common = `key=${encodeURIComponent(key)}&client_key=concord-nova&limit=30&media_filter=gif,tinygif&contentfilter=medium&locale=ru_RU`;
-  const url = q ? `https://tenor.googleapis.com/v2/search?${common}&q=${encodeURIComponent(q)}` : `https://tenor.googleapis.com/v2/featured?${common}`;
-  const j = (await getJson(url)) as { results?: { id: string; media_formats?: Record<string, { url: string; dims?: [number, number] }> }[] };
-  return (j.results ?? [])
-    .map((g) => ({
-      id: g.id,
-      url: g.media_formats?.gif?.url ?? "",
-      preview: g.media_formats?.tinygif?.url ?? g.media_formats?.gif?.url ?? "",
-      width: g.media_formats?.gif?.dims?.[0] ?? null,
-      height: g.media_formats?.gif?.dims?.[1] ?? null,
-    }))
-    .filter((g) => g.url);
 }

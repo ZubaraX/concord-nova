@@ -3,13 +3,12 @@ import clsx from "clsx";
 import { Clock, Smile, User, Leaf, Coffee, Plane, Trophy, Lamp, Heart, Flag, Search, Loader2 } from "lucide-react";
 import type { EmojiDTO, GifDTO } from "@nova/shared";
 import { loadEmoji, recordRecent, searchEmoji, withSkin, type Emoji } from "../../lib/emoji";
-import { api } from "../../lib/api";
 import { t, tr } from "../../lib/i18n";
 import { mediaUrl } from "../../lib/server";
-import { useDebounced } from "../../lib/hooks";
 import { useData } from "../../store/data";
 import { settings, useSettings } from "../../store/settings";
 import { GuildIcon } from "../../components/ui/avatar";
+import { GifTab } from "./GifPicker";
 
 export interface PickedEmoji {
   /** Reaction key: unicode char, or "name:id" for custom emoji. */
@@ -22,14 +21,30 @@ export interface PickedEmoji {
 const GROUP_ICONS = [Smile, User, null, Leaf, Coffee, Plane, Trophy, Lamp, Heart, Flag];
 const TONES = ["✋", "✋🏻", "✋🏼", "✋🏽", "✋🏾", "✋🏿"];
 
-export function EmojiPicker({ onPick, closeOnPick = true, onClose, tabs = ["emoji"], onGif }: { onPick: (e: PickedEmoji) => void; closeOnPick?: boolean; onClose?: () => void; tabs?: ("emoji" | "gif")[]; onGif?: (g: GifDTO) => void }) {
-  const [tab, setTab] = useState<"emoji" | "gif">(tabs[0]);
+export function EmojiPicker({
+  onPick,
+  closeOnPick = true,
+  onClose,
+  tabs = ["emoji"],
+  initialTab,
+  onGif,
+}: {
+  onPick: (e: PickedEmoji) => void;
+  closeOnPick?: boolean;
+  onClose?: () => void;
+  tabs?: ("emoji" | "gif")[];
+  /** Which tab to open on (the composer's GIF button opens straight on GIFs). */
+  initialTab?: "emoji" | "gif";
+  /** `query` is the search that found the GIF ("" for favourites, recent and trending). */
+  onGif?: (g: GifDTO, query: string) => void;
+}) {
+  const [tab, setTab] = useState<"emoji" | "gif">(initialTab && tabs.includes(initialTab) ? initialTab : tabs[0]);
   return (
     <div className="menu-surface flex h-[440px] w-[min(380px,calc(100vw-16px))] flex-col overflow-hidden rounded-2xl shadow-lift">
       {tabs.length > 1 && (
         <div className="flex gap-1 px-3 pt-3">
           {tabs.map((x) => (
-            <button key={x} onClick={() => setTab(x)} className={clsx("rounded-lg px-3 py-1.5 text-[13.5px] font-semibold transition-colors", tab === x ? "bg-raised text-fg" : "text-fg-3 hover:text-fg")}>
+            <button key={x} onClick={() => setTab(x)} aria-pressed={tab === x} data-tab={x} className={clsx("rounded-lg px-3 py-1.5 text-[13.5px] font-semibold transition-colors", tab === x ? "bg-raised text-fg" : "text-fg-3 hover:text-fg")}>
               {x === "emoji" ? t("chat.emoji") : t("chat.gif")}
             </button>
           ))}
@@ -45,8 +60,9 @@ export function EmojiPicker({ onPick, closeOnPick = true, onClose, tabs = ["emoj
         />
       ) : (
         <GifTab
-          onPick={(g) => {
-            onGif?.(g);
+          onClose={onClose}
+          onPick={(g, query) => {
+            onGif?.(g, query);
             onClose?.();
           }}
         />
@@ -257,88 +273,5 @@ function Section({ id, title, children }: { id: string; title: string; children:
       <h4 className="sticky top-0 z-[1] bg-panel/95 px-1 pb-1 pt-2 text-[12px] font-semibold text-fg-3 backdrop-blur">{title}</h4>
       <div className="grid grid-cols-[repeat(auto-fill,40px)] justify-between">{children}</div>
     </section>
-  );
-}
-
-function GifTab({ onPick }: { onPick: (g: GifDTO) => void }) {
-  const [q, setQ] = useState("");
-  const query = useDebounced(q, 350);
-  const [items, setItems] = useState<GifDTO[] | null>(null);
-  const [page, setPage] = useState(1);
-  const [more, setMore] = useState(true);
-  const enabled = useData((s) => s.server?.gifs ?? false);
-
-  useEffect(() => {
-    if (!enabled) return;
-    let alive = true;
-    setItems(null);
-    setPage(1);
-    api<{ results: GifDTO[] }>("/api/gifs/search", { query: { q: query, page: 1 } })
-      .then((r) => {
-        if (!alive) return;
-        setItems(r.results);
-        setMore(r.results.length >= 24);
-      })
-      .catch(() => alive && setItems([]));
-    return () => {
-      alive = false;
-    };
-  }, [query, enabled]);
-
-  const loadMore = () => {
-    if (!more || !items) return;
-    const next = page + 1;
-    setPage(next);
-    void api<{ results: GifDTO[] }>("/api/gifs/search", { query: { q: query, page: next } }).then((r) => {
-      setItems((cur) => [...(cur ?? []), ...r.results]);
-      setMore(r.results.length >= 24);
-    });
-  };
-
-  if (!enabled) return <div className="flex flex-1 items-center justify-center p-6 text-center text-[14px] text-fg-3">{t("gif.unavailable")}</div>;
-  const cols: GifDTO[][] = [[], []];
-  const heights = [0, 0];
-  for (const g of items ?? []) {
-    const h = g.width && g.height ? g.height / g.width : 1;
-    const i = heights[0] <= heights[1] ? 0 : 1;
-    cols[i].push(g);
-    heights[i] += h;
-  }
-  return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div className="p-3">
-        <div className="relative">
-          <Search size={15} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-3" />
-          <input autoFocus value={q} onChange={(e) => setQ(e.target.value)} placeholder={t("gif.search")} className="h-9 w-full rounded-lg bg-canvas/70 pl-8 pr-2 text-[14px] outline-none ring-1 ring-line/10 focus:ring-star/60" />
-        </div>
-      </div>
-      <div
-        className="scroll-thin min-h-0 flex-1 overflow-y-auto px-3 pb-3"
-        onScroll={(e) => {
-          const el = e.currentTarget;
-          if (el.scrollTop + el.clientHeight > el.scrollHeight - 200) loadMore();
-        }}
-      >
-        {!items ? (
-          <div className="flex h-full items-center justify-center text-fg-3">
-            <Loader2 className="anim-spin" />
-          </div>
-        ) : !items.length ? (
-          <div className="p-6 text-center text-[14px] text-fg-3">{t("gif.none")}</div>
-        ) : (
-          <div className="flex gap-2">
-            {cols.map((col, ci) => (
-              <div key={ci} className="flex flex-1 flex-col gap-2">
-                {col.map((g) => (
-                  <button key={g.id + ci} onClick={() => onPick(g)} className="overflow-hidden rounded-lg bg-raised transition-transform hover:scale-[1.02]" style={{ aspectRatio: g.width && g.height ? `${g.width}/${g.height}` : "1" }}>
-                    <img src={g.preview} alt="" loading="lazy" className="h-full w-full object-cover" />
-                  </button>
-                ))}
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
   );
 }

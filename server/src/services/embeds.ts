@@ -2,12 +2,16 @@
 // (click-to-play), direct images, GIF pages and OpenGraph cards. All outbound
 // fetching goes through the SSRF-safe client; external images are served via
 // our signed media proxy (no mixed content, no IP leaks to third parties).
+// Two exceptions: files on this very server are linked as they are, and GIFs
+// from the search provider's CDN load straight from it (its terms forbid
+// re-hosting, and everybody's picker talks to it anyway).
 import { createHmac } from "node:crypto";
 import sharp from "sharp";
 import { extractUrls, type EmbedDTO, MessageFlags } from "@nova/shared";
 import { prisma } from "../db";
 import { config } from "../config";
 import { safeFetch } from "../lib/ssrf";
+import { publicUrl } from "../lib/files";
 import { toChannel } from "../gateway/io";
 import { loadMessage } from "./serialize";
 
@@ -71,6 +75,25 @@ function parseColor(v?: string): number | null {
   return m ? parseInt(m[1], 16) : null;
 }
 
+/** Hosts whose media the apps load directly instead of through our proxy. */
+const DIRECT_MEDIA_RE = /(^|\.)klipy\.com$/i;
+const mediaSrc = (url: string) => (DIRECT_MEDIA_RE.test(new URL(url).hostname) ? url : proxied(url)!);
+
+/** A link to an image uploaded to this server — a GIF re-sent from favourites. Needs no fetch. */
+async function ownFileEmbed(url: string): Promise<EmbedDTO | null> {
+  let path: string;
+  try {
+    const u = new URL(url);
+    if (!u.pathname.startsWith("/files/")) return null;
+    path = decodeURIComponent(u.pathname.slice("/files/".length));
+  } catch {
+    return null;
+  }
+  const a = await prisma.attachment.findFirst({ where: { path }, select: { path: true, contentType: true, width: true, height: true } });
+  if (!a?.contentType?.startsWith("image/")) return null;
+  return { type: "image", url, image: { url: publicUrl(a.path), width: a.width, height: a.height } };
+}
+
 const YT_RE = /(?:youtube\.com\/(?:watch\?(?:.*&)?v=|shorts\/|embed\/|live\/)|youtu\.be\/)([\w-]{11})/i;
 const IMAGE_EXT_RE = /\.(png|jpe?g|gif|webp|avif)(\?.*)?$/i;
 
@@ -102,6 +125,9 @@ async function buildEmbed(url: string): Promise<EmbedDTO | null> {
     };
   }
 
+  const own = await ownFileEmbed(url);
+  if (own) return own;
+
   const res = await safeFetch(url, { maxBytes: IMAGE_EXT_RE.test(url) ? 256_000 : 1_000_000 });
   if (res.status >= 400) return null;
   const ct = res.contentType.toLowerCase();
@@ -116,7 +142,7 @@ async function buildEmbed(url: string): Promise<EmbedDTO | null> {
     } catch {
       /* partial download — dimensions unknown */
     }
-    return { type: "image", url, image: { url: proxied(res.url)!, width, height } };
+    return { type: "image", url, image: { url: mediaSrc(res.url), width, height } };
   }
   if (!ct.includes("html")) return null;
 
