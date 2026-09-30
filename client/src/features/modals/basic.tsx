@@ -7,6 +7,7 @@ import { api, uploadImage } from "../../lib/api";
 import { errorText, t } from "../../lib/i18n";
 import { toast } from "../../lib/bus";
 import { mediaUrl, webLink } from "../../lib/server";
+import { OpenInApp } from "../../components/ui/OpenInApp";
 import { getLocale } from "../../lib/i18n";
 import { RelationshipType } from "@nova/shared";
 import { displayName, useData } from "../../store/data";
@@ -187,6 +188,7 @@ export function AcceptInviteModal({ code, onClose }: { code: string; onClose: ()
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const member = useData((s) => (invite ? !!s.guilds[invite.guild.id] : false));
+  const downloads = useData((s) => s.server?.downloads);
   useEffect(() => {
     api<InviteDTO>(`/api/invites/${code}`, { auth: false })
       .then(setInvite)
@@ -247,6 +249,7 @@ export function AcceptInviteModal({ code, onClose }: { code: string; onClose: ()
         <Button block size="lg" loading={busy} disabled={!invite} onClick={() => void accept()}>
           {member ? t("guild.alreadyMember") : t("guild.accept")}
         </Button>
+        <OpenInApp code={code} downloads={downloads} className="mt-2" />
       </div>
     </Modal>
   );
@@ -781,6 +784,48 @@ export function TimeoutModal({ guildId, userId, onClose }: { guildId: string; us
           {t("profile.timeout")}
         </Button>
       </ModalFooter>
+    </Modal>
+  );
+}
+
+// ── server nickname ──────────────────────────────────────────────────────────
+export function NickModal({ guildId, userId, onClose }: { guildId: string; userId: string; onClose: () => void }) {
+  const current = useData((s) => s.members[guildId]?.[userId]?.nick ?? "");
+  const base = useData((s) => s.users[userId]?.displayName || s.users[userId]?.username || "");
+  const [nick, setNick] = useState(current);
+  const [busy, setBusy] = useState(false);
+  const save = async (e: FormEvent) => {
+    e.preventDefault();
+    setBusy(true);
+    try {
+      await api(`/api/guilds/${guildId}/members/${userId}`, { method: "PATCH", body: { nick: nick.trim() || null } });
+      onClose();
+    } catch (err) {
+      toast(errorText(err), "error");
+      setBusy(false);
+    }
+  };
+  return (
+    <Modal open onClose={onClose} width={420}>
+      <form onSubmit={save}>
+        <ModalHeader title={t("profile.changeNick")} subtitle={t("profile.nickHint")} />
+        <div className="px-6 pb-5 pt-2">
+          <Input autoFocus label={t("profile.nick")} value={nick} maxLength={32} placeholder={base} onChange={(e) => setNick(e.target.value)} />
+        </div>
+        <ModalFooter>
+          {nick && (
+            <Button type="button" variant="ghost" className="mr-auto" onClick={() => setNick("")}>
+              {t("common.reset")}
+            </Button>
+          )}
+          <Button type="button" variant="ghost" onClick={onClose}>
+            {t("common.cancel")}
+          </Button>
+          <Button type="submit" loading={busy}>
+            {t("common.save")}
+          </Button>
+        </ModalFooter>
+      </form>
     </Modal>
   );
 }

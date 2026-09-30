@@ -40,7 +40,8 @@ test("voice channel: join, hear each other in both ears, see mute", async ({ bro
   const alice = await register(request, "Алиса");
   const bob = await register(request, "Боб");
   const { guild, voice } = await guildWith(request, alice, [bob]);
-  const a = await openAs(browser, alice, `/#/channels/${guild.id}/${voice.id}`);
+  // Alice sends the fake microphone's beeps untouched: a denoiser may (rightly) treat them as noise.
+  const a = await openAs(browser, alice, `/#/channels/${guild.id}/${voice.id}`, { local: { noise: "off" } });
   const b = await openAs(browser, bob, `/#/channels/${guild.id}/${voice.id}`);
 
   await a.page.getByRole("button", { name: "Зайти в канал" }).click();
@@ -59,6 +60,10 @@ test("voice channel: join, hear each other in both ears, see mute", async ({ bro
   expect(probe.found, "no remote audio element").toBeGreaterThan(0);
   if (probe.channels >= 2) expect(probe.right, JSON.stringify(probe)).toBeGreaterThan(probe.left * 0.25);
 
+  // The strong denoiser (DeepFilterNet3, shipped with the app) really loaded — no silent fallback.
+  await expect(b.page.getByRole("button", { name: "Шумоподавление" })).toHaveAttribute("data-denoiser", "deep", { timeout: 20_000 });
+  await expect(a.page.getByRole("button", { name: "Шумоподавление" })).toHaveAttribute("data-denoiser", "none");
+
   // Connection info: live latency, a one-minute chart with a hover readout.
   await b.page.getByRole("button", { name: "Сведения о подключении" }).last().click();
   const info = b.page.locator("[data-connection-stats]");
@@ -72,6 +77,22 @@ test("voice channel: join, hear each other in both ears, see mute", async ({ bro
   await expect(info).toContainText("Потери пакетов за минуту");
   await b.page.keyboard.press("Escape");
   await expect(info).toHaveCount(0);
+
+  // Mute for yourself: a mark on the tile; the same menu item takes it back.
+  const aliceTile = b.page.locator(`[data-user="${alice.id}"]`);
+  await aliceTile.click({ button: "right" });
+  await b.page.getByRole("menuitem", { name: "Заглушить для себя" }).click();
+  await expect(aliceTile.getByTitle("Заглушён для вас")).toBeVisible();
+  await aliceTile.click({ button: "right" });
+  await b.page.getByRole("menuitem", { name: "Вернуть звук для себя" }).click();
+  await expect(aliceTile.getByTitle("Заглушён для вас")).toHaveCount(0);
+
+  // Voice changer: switching the effect mid-call keeps the audio flowing.
+  await a.page.getByRole("button", { name: "Изменение голоса" }).click();
+  await a.page.getByRole("menuitem", { name: "Робот" }).click();
+  await expect(b.page.locator(`[data-user="${alice.id}"] [data-speaking="true"]`)).toBeVisible({ timeout: 20_000 });
+  await a.page.getByRole("button", { name: "Изменение голоса" }).click();
+  await a.page.getByRole("menuitem", { name: "Обычный голос" }).click();
 
   // Alice mutes → Bob sees the crossed-out mic on her tile.
   await a.page.getByRole("button", { name: "Выключить микрофон" }).first().click();
@@ -107,10 +128,55 @@ test("DM call: ring, answer, hang up, call log line", async ({ browser, request 
     const controls = (await s.page.getByRole("button", { name: "Отключиться" }).last().boundingBox())!;
     expect(controls.y, "call controls below the header").toBeGreaterThan(header.y + header.height);
   }
+  await expect(a.page.getByRole("button", { name: "Во весь экран" })).toBeVisible();
   // Already in the call: the call line in the chat doesn't offer to join it.
   await expect(a.page.getByRole("button", { name: "Присоединиться" })).toHaveCount(0);
   await a.page.getByRole("button", { name: "Отключиться" }).first().click();
   await b.page.getByRole("button", { name: "Отключиться" }).first().click();
   await expect(messageRow(a.page, "Звонок")).toBeVisible();
   noErrors(a, b);
+});
+
+test("voice changer: every effect produces sound, pitch effects move the pitch", async ({ browser, request }) => {
+  const s = await openAs(browser, await register(request, "Голос"));
+  const res = await s.page.evaluate(async () => {
+    const { VOICE_EFFECTS, buildEffect } = await import("/src/features/voice/effects.ts" as string);
+    const out: Record<string, { rms: number; hz: number; finite: boolean }> = {};
+    for (const e of VOICE_EFFECTS as string[]) {
+      const sr = 48_000;
+      const ctx = new OfflineAudioContext(1, sr * 2, sr);
+      const osc = ctx.createOscillator();
+      osc.type = "sawtooth";
+      osc.frequency.value = 200;
+      const fx = buildEffect(ctx, e);
+      osc.connect(fx.input);
+      fx.output.connect(ctx.destination);
+      osc.start();
+      const d = (await ctx.startRendering()).getChannelData(0);
+      let sum = 0;
+      for (let i = sr; i < sr * 2; i++) sum += d[i] * d[i];
+      // Fundamental by autocorrelation (100–500 Hz) over the last second.
+      let best = -Infinity;
+      let lag = 0;
+      for (let l = 96; l <= 480; l++) {
+        let c = 0;
+        for (let i = sr; i < sr * 2 - l; i += 2) c += d[i] * d[i + l];
+        if (c > best) {
+          best = c;
+          lag = l;
+        }
+      }
+      out[e] = { rms: Math.sqrt(sum / sr), hz: Math.round(sr / lag), finite: d.every(Number.isFinite) };
+    }
+    return out;
+  });
+  for (const [name, r] of Object.entries(res)) {
+    expect(r.finite, name).toBe(true);
+    expect(r.rms, name).toBeGreaterThan(0.01);
+  }
+  // A 200 Hz tone: the chipmunk raises it, the giant lowers it.
+  expect(res.none.hz).toBe(200);
+  expect(res.high.hz, JSON.stringify(res.high)).toBeGreaterThan(260);
+  expect(res.low.hz, JSON.stringify(res.low)).toBeLessThan(165);
+  noErrors(s);
 });

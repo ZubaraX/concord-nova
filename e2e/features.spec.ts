@@ -85,7 +85,11 @@ test("camera and screen share reach the other side", async ({ browser, request }
   await expect(b.page.locator(`[data-user="${alice.id}"][data-source="camera"] video`)).toBeVisible({ timeout: 20_000 });
 
   await a.page.getByRole("button", { name: "Показать экран" }).first().click();
-  await expect(b.page.locator(`[data-user="${alice.id}"][data-source="screen"]`)).toBeVisible({ timeout: 20_000 });
+  const stream = b.page.locator(`[data-user="${alice.id}"][data-source="screen"]`);
+  await expect(stream).toBeVisible({ timeout: 20_000 });
+  await expect(stream.locator("video")).toBeVisible({ timeout: 20_000 });
+  await stream.hover();
+  await expect(stream.getByRole("button", { name: "Во весь экран" })).toBeVisible();
   await a.page.getByRole("button", { name: "Отключиться" }).first().click();
   noErrors(a, b);
 });

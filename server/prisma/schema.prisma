@@ -20,6 +20,11 @@ model User {
   avatar              String?
   banner              String?
   accentColor         Int?
+  /// Second profile colour: with accentColor it makes the profile gradient.
+  accentColor2        Int?
+  /// Avatar decoration and profile effect: ids of built-in client presets.
+  decoration          String?
+  profileEffect       String?
   bio                 String?
   pronouns            String?
   /// What the user picked: online | idle | dnd | invisible (kept across sessions)

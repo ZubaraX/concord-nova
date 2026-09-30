@@ -259,7 +259,7 @@ export function optimisticMessage(channelId: string, nonce: string, input: Messa
     id: PENDING_PREFIX + nonce,
     channelId,
     guildId: d.channels[channelId]?.guildId ?? null,
-    author: { id: me.id, username: me.username, displayName: me.displayName, avatar: me.avatar, accentColor: me.accentColor, flags: me.flags },
+    author: { id: me.id, username: me.username, displayName: me.displayName, avatar: me.avatar, accentColor: me.accentColor, decoration: me.decoration ?? null, flags: me.flags },
     type: input.replyTo ? 19 : 0,
     content: input.content ?? "",
     createdAt: new Date().toISOString(),

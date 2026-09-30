@@ -119,7 +119,7 @@ function applyReady(r: ReadyPayload): DataState {
   // Honor a saved server order.
   const order = (r.settings?.guildOrder as string[] | undefined) ?? [];
   s.guildIds = [...order.filter((id) => s.guilds[id]), ...s.guildIds.filter((id) => !order.includes(id))];
-  s.users[r.user.id] = { id: r.user.id, username: r.user.username, displayName: r.user.displayName, avatar: r.user.avatar, accentColor: r.user.accentColor, flags: r.user.flags };
+  s.users[r.user.id] = { id: r.user.id, username: r.user.username, displayName: r.user.displayName, avatar: r.user.avatar, accentColor: r.user.accentColor, decoration: r.user.decoration ?? null, flags: r.user.flags };
   return s;
 }
 
@@ -153,7 +153,7 @@ export function applyDispatch(e: DispatchEvent) {
       return;
     case "SELF_UPDATE": {
       const u = e.d;
-      set({ me: u, users: patch(s.users, u.id, { id: u.id, username: u.username, displayName: u.displayName, avatar: u.avatar, accentColor: u.accentColor, flags: u.flags }) });
+      set({ me: u, users: patch(s.users, u.id, { id: u.id, username: u.username, displayName: u.displayName, avatar: u.avatar, accentColor: u.accentColor, decoration: u.decoration, flags: u.flags }) });
       return;
     }
     case "USER_SETTINGS_UPDATE":

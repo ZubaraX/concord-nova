@@ -1,0 +1,3 @@
+ALTER TABLE "User" ADD COLUMN "accentColor2" INTEGER;
+ALTER TABLE "User" ADD COLUMN "decoration" TEXT;
+ALTER TABLE "User" ADD COLUMN "profileEffect" TEXT;

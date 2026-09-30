@@ -55,6 +55,9 @@ const schema = z.object({
   SMTP_USER: z.string().default(""),
   SMTP_PASS: z.string().default(""),
   SMTP_FROM: z.string().default(""),
+  /** Links offered to people who open an invite in a browser and don't have the app yet ("" hides one). */
+  DOWNLOAD_WINDOWS_URL: z.string().default("https://github.com/ZubaraX/concord-nova/releases/latest"),
+  DOWNLOAD_ANDROID_URL: z.string().default("https://github.com/ZubaraX/concord-nova/releases/download/android/ConcordNova.apk"),
 
   LOG_LEVEL: z.string().default("info"),
 });

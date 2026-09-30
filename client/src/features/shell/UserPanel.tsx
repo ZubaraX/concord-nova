@@ -1,13 +1,14 @@
 import { useEffect, useState } from "react";
 import clsx from "clsx";
-import { Headphones, HeadphoneOff, Mic, MicOff, Settings, PhoneOff, Video, VideoOff, MonitorUp, MonitorX, AudioLines } from "lucide-react";
+import { Headphones, HeadphoneOff, Mic, MicOff, Settings, PhoneOff, Video, VideoOff, MonitorUp, MonitorX, AudioLines, Drama } from "lucide-react";
 import { api } from "../../lib/api";
 import { t } from "../../lib/i18n";
 import { fmtClock } from "../../lib/time";
 import { canShareScreen } from "../../lib/platform";
 import { channelTitle, useData } from "../../store/data";
 import { navigate, useUI } from "../../store/ui";
-import { useSettings } from "../../store/settings";
+import { preferredDenoiser, useSettings } from "../../store/settings";
+import { VOICE_EFFECTS } from "../voice/effects";
 import { IconButton } from "../../components/ui/primitives";
 import { MenuList, Popover, Tooltip, usePopover } from "../../components/ui/overlay";
 import { UserAvatar, StatusDot } from "../../components/ui/avatar";
@@ -55,7 +56,7 @@ export function VoicePanel() {
           <PhoneOff size={18} />
         </IconButton>
       </div>
-      <div className="mt-2 grid grid-cols-3 gap-1.5">
+      <div className="mt-2 grid grid-cols-4 gap-1.5">
         <button onClick={() => void toggleCamera()} className={clsx("flex h-8 items-center justify-center rounded-lg transition-colors", v.cameraOn ? "bg-star/20 text-star" : "bg-raised text-fg-2 hover:bg-overlay hover:text-fg")} aria-label={v.cameraOn ? t("voice.cameraOff") : t("voice.camera")}>
           {v.cameraOn ? <VideoOff size={17} /> : <Video size={17} />}
         </button>
@@ -68,6 +69,7 @@ export function VoicePanel() {
           {v.screenOn ? <MonitorX size={17} /> : <MonitorUp size={17} />}
         </button>
         <NoiseToggle />
+        <VoiceEffectButton />
       </div>
     </div>
   );
@@ -75,17 +77,44 @@ export function VoicePanel() {
 
 function NoiseToggle() {
   const noise = useSettings((s) => s.noise);
-  const on = noise === "rnnoise";
+  const running = useVoice((s) => s.denoiser);
+  const on = noise === "deep" || noise === "rnnoise";
   return (
-    <Tooltip content={`${t("settings.noiseSuppression")}: ${on ? t("settings.noiseAi") : noise === "standard" ? t("settings.noiseStandard") : t("settings.noiseOff")}`}>
+    <Tooltip content={`${t("settings.noiseSuppression")}: ${t(`settings.noiseMode.${noise}`)}`}>
       <button
-        onClick={() => useSettings.getState().setLocal({ noise: on ? "standard" : "rnnoise" })}
+        onClick={() => useSettings.getState().setLocal({ noise: on ? "standard" : preferredDenoiser() })}
         className={clsx("flex h-8 w-full items-center justify-center rounded-lg transition-colors", on ? "bg-star/20 text-star" : "bg-raised text-fg-2 hover:bg-overlay hover:text-fg")}
         aria-label={t("settings.noiseSuppression")}
+        data-denoiser={running}
       >
         <AudioLines size={17} />
       </button>
     </Tooltip>
+  );
+}
+
+/** Voice changer: pick an effect for your own microphone. */
+function VoiceEffectButton() {
+  const effect = useSettings((s) => s.voiceEffect);
+  const pop = usePopover();
+  return (
+    <>
+      <Tooltip content={`${t("voice.fx.title")}: ${t(`voice.fx.${effect}`)}`}>
+        <button
+          onClick={pop.toggle}
+          className={clsx("flex h-8 w-full items-center justify-center rounded-lg transition-colors", effect !== "none" ? "bg-star/20 text-star" : "bg-raised text-fg-2 hover:bg-overlay hover:text-fg")}
+          aria-label={t("voice.fx.title")}
+        >
+          <Drama size={17} />
+        </button>
+      </Tooltip>
+      <Popover anchor={pop.anchor} onClose={pop.close} placement="top">
+        <MenuList
+          onClose={pop.close}
+          items={VOICE_EFFECTS.map((e) => ({ label: t(`voice.fx.${e}`), checked: effect === e, keepOpen: false, onSelect: () => useSettings.getState().setLocal({ voiceEffect: e }) }))}
+        />
+      </Popover>
+    </>
   );
 }
 

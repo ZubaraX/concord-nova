@@ -607,3 +607,222 @@ input[type="color"]::-webkit-color-swatch {
 .no-drag {
   -webkit-app-region: no-drag;
 }
+
+/* ── Cosmetics (components/ui/cosmetics.tsx) ──────────────────────────────────
+   Avatar decorations are drawn in a 140×140 SVG box around the avatar;
+   backdrops (profile effects, chat wallpapers) fill their container. */
+.dc-spin {
+  transform-box: view-box;
+  transform-origin: 70px 70px;
+  animation: dc-spin 6s linear infinite;
+}
+@keyframes dc-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.dc-pulse {
+  transform-box: view-box;
+  transform-origin: 70px 70px;
+  animation: dc-pulse 2.2s ease-out infinite;
+}
+@keyframes dc-pulse {
+  0% {
+    transform: scale(0.97);
+    opacity: 0.95;
+  }
+  100% {
+    transform: scale(1.16);
+    opacity: 0;
+  }
+}
+.dc-twinkle {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: dc-twinkle 2.6s ease-in-out infinite;
+}
+@keyframes dc-twinkle {
+  0%,
+  100% {
+    transform: scale(0.55) rotate(0deg);
+    opacity: 0.4;
+  }
+  50% {
+    transform: scale(1) rotate(18deg);
+    opacity: 1;
+  }
+}
+.dc-float {
+  animation: dc-float 3s ease-in-out infinite;
+}
+@keyframes dc-float {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-3px);
+  }
+}
+.dc-flicker {
+  transform-box: view-box;
+  animation: dc-flicker 0.9s ease-in-out infinite;
+}
+@keyframes dc-flicker {
+  0%,
+  100% {
+    transform: scale(1, 1);
+  }
+  50% {
+    transform: scale(0.86, 1.18);
+  }
+}
+.dc-rise {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: dc-rise 3.2s ease-in infinite;
+}
+@keyframes dc-rise {
+  0% {
+    transform: translateY(6px) scale(0.6);
+    opacity: 0;
+  }
+  25% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(-16px) scale(1);
+    opacity: 0;
+  }
+}
+.dc-fall {
+  animation: dc-fall 3.4s linear infinite;
+}
+@keyframes dc-fall {
+  0% {
+    transform: translateY(-8px);
+    opacity: 0;
+  }
+  15% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(46px);
+    opacity: 0;
+  }
+}
+
+.backdrop {
+  container-type: size;
+}
+.bd-wave {
+  animation: bd-wave 12s linear infinite;
+}
+@keyframes bd-wave {
+  to {
+    transform: translateX(-50%);
+  }
+}
+.bd-twinkle {
+  animation: bd-twinkle 3s ease-in-out infinite;
+}
+@keyframes bd-twinkle {
+  0%,
+  100% {
+    opacity: 0.15;
+    transform: scale(0.7);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.2);
+  }
+}
+.bd-drift {
+  animation: bd-drift 18s ease-in-out infinite alternate;
+}
+@keyframes bd-drift {
+  0% {
+    transform: translate(-12%, -6%) scale(1);
+  }
+  50% {
+    transform: translate(14%, 10%) scale(1.25);
+  }
+  100% {
+    transform: translate(-6%, 16%) scale(0.9);
+  }
+}
+.bd-fall {
+  animation: bd-fall 10s linear infinite;
+}
+@keyframes bd-fall {
+  to {
+    transform: translate(24px, 112cqh);
+  }
+}
+.bd-rise {
+  animation: bd-rise 12s linear infinite;
+}
+@keyframes bd-rise {
+  0% {
+    transform: translateY(0) scale(0.7);
+    opacity: 0;
+  }
+  10% {
+    opacity: 0.8;
+  }
+  100% {
+    transform: translate(18px, -125cqh) scale(1.1);
+    opacity: 0;
+  }
+}
+.bd-firefly {
+  animation: bd-firefly 8s ease-in-out infinite alternate;
+}
+@keyframes bd-firefly {
+  0% {
+    transform: translate(0, 0);
+    opacity: 0.2;
+  }
+  30% {
+    opacity: 1;
+  }
+  60% {
+    transform: translate(38px, -26px);
+    opacity: 0.5;
+  }
+  100% {
+    transform: translate(-24px, 18px);
+    opacity: 0.9;
+  }
+}
+.bd-rain {
+  animation: bd-rain 1s linear infinite;
+}
+@keyframes bd-rain {
+  to {
+    transform: translate(-18px, 130cqh);
+  }
+}
+.bd-flow {
+  animation: bd-flow 16s ease infinite;
+}
+@keyframes bd-flow {
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+/* No motion: cosmetics stay as still pictures instead of jumping to their last frame. */
+.fx-off .decor *,
+.fx-off .backdrop * {
+  animation: none !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .decor *,
+  .backdrop * {
+    animation: none !important;
+  }
+}

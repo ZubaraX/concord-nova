@@ -13,6 +13,7 @@ import { IconButton } from "../../components/ui/primitives";
 import { useContextMenu } from "../../components/ui/overlay";
 import { UserAvatar } from "../../components/ui/avatar";
 import { MessageList } from "./MessageList";
+import { ChatWallpaper } from "./Wallpaper";
 import { Composer, dropFiles } from "./Composer";
 import { channelIcon } from "../shell/GuildSidebar";
 import { channelMenu, setMute, callUser } from "../shell/menus";
@@ -153,7 +154,8 @@ export function ChannelView({ channelId }: { channelId: string }) {
 
   const chat = (
     <div
-      className="relative flex min-h-0 min-w-0 flex-1 flex-col"
+      // isolate: the wallpaper sits at z -10 inside this box, under the messages.
+      className="relative isolate flex min-h-0 min-w-0 flex-1 flex-col"
       onDragEnter={(e) => {
         if (e.dataTransfer.types.includes("Files")) setDrag((d) => d + 1);
       }}
@@ -165,6 +167,7 @@ export function ChannelView({ channelId }: { channelId: string }) {
         if (e.dataTransfer.files.length) dropFiles(channelId, e.dataTransfer.files);
       }}
     >
+      <ChatWallpaper />
       <MessageList key={channelId} channelId={channelId} />
       <Typing channelId={channelId} />
       <Composer channelId={channelId} compact={isVoice} />

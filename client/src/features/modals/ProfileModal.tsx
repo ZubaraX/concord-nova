@@ -16,6 +16,7 @@ import { Markdown } from "../chat/markdown";
 import { callUser, openDmWith } from "../shell/menus";
 import { activityText } from "../people/presence";
 import { UserVolume } from "../voice/VoiceStage";
+import { Backdrop } from "../../components/ui/cosmetics";
 import { useVoice } from "../voice/voice";
 import { MenuList, Popover, usePopover } from "../../components/ui/overlay";
 
@@ -48,6 +49,7 @@ export function ProfileModal({ userId, guildId, onClose }: { userId: string; gui
   const u = data?.user;
   const self = userId === me;
   const accent = u?.accentColor ? `#${u.accentColor.toString(16).padStart(6, "0")}` : null;
+  const accent2 = u?.accentColor2 ? `#${u.accentColor2.toString(16).padStart(6, "0")}` : null;
   const canRoles = !!guildId && can(bits, Permission.MANAGE_ROLES);
   const memberRoles = (member?.roles ?? []).map((id) => roles?.[id]).filter(Boolean).sort((a, b) => b!.position - a!.position);
   const s = useData.getState();
@@ -55,9 +57,11 @@ export function ProfileModal({ userId, guildId, onClose }: { userId: string; gui
 
   return (
     <Modal open onClose={onClose} width={600} className="!bg-panel">
-      <div className="relative h-[150px] overflow-hidden" style={{ background: accent ?? "linear-gradient(120deg, rgb(var(--star) / 0.45), rgb(var(--sky-glow) / 0.6))" }}>
+      {accent && accent2 && <div className="pointer-events-none absolute inset-0" style={{ background: `linear-gradient(165deg, ${accent}3d, transparent 50%, ${accent2}38)` }} />}
+      <div className="relative h-[150px] overflow-hidden" style={{ background: accent && accent2 ? `linear-gradient(120deg, ${accent}, ${accent2})` : (accent ?? "linear-gradient(120deg, rgb(var(--star) / 0.45), rgb(var(--sky-glow) / 0.6))") }}>
         {u?.banner && <img src={mediaUrl(u.banner, 600)} alt="" className="h-full w-full object-cover" />}
       </div>
+      <Backdrop kind={u?.profileEffect} />
       <div className="relative px-5 pb-5">
         <div className="-mt-[52px] flex items-end justify-between">
           <div className="rounded-full bg-panel p-1.5">

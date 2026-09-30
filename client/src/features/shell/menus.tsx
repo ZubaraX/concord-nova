@@ -135,6 +135,12 @@ export async function callUser(userId: string) {
   await joinVoice(id);
 }
 
+/** Mute someone for yourself only (their mic and their stream audio). */
+export function toggleLocalMute(userId: string) {
+  const s = settings();
+  s.setLocal({ localMutes: { ...s.localMutes, [userId]: !s.localMutes[userId] } });
+}
+
 export function userMenu(userId: string, guildId?: string | null): MenuEntry[] {
   const s = data();
   const me = s.me?.id;
@@ -152,8 +158,14 @@ export function userMenu(userId: string, guildId?: string | null): MenuEntry[] {
     { label: t("profile.viewFull"), icon: <MessageSquare size={16} />, onSelect: () => ui().setModal({ kind: "profile", userId, guildId }) },
     !self && { label: t("friends.message"), icon: <MessageSquare size={16} />, onSelect: () => void run(openDmWith(userId)) },
     !self && { label: t("friends.call"), icon: <Phone size={16} />, onSelect: () => void run(callUser(userId)) },
+    guildId &&
+      (can(bits, Permission.MANAGE_NICKNAMES) || (self && can(bits, Permission.CHANGE_NICKNAME))) && {
+        label: t("profile.changeNick"),
+        icon: <Pencil size={16} />,
+        onSelect: () => ui().setModal({ kind: "nick", guildId, userId }),
+      },
     !self && inCallWithMe && { separator: true },
-    !self && inCallWithMe && { label: t("voice.localMute"), icon: <VolumeX size={16} />, checked: localMuted, keepOpen: true, onSelect: () => local.setLocal({ localMutes: { ...local.localMutes, [userId]: !localMuted } }) },
+    !self && inCallWithMe && { label: localMuted ? t("voice.localUnmute") : t("voice.localMute"), icon: localMuted ? <Volume2 size={16} /> : <VolumeX size={16} />, onSelect: () => toggleLocalMute(userId) },
     { separator: true },
     !self && rel === RelationshipType.FRIEND && {
       label: t("friends.remove"),

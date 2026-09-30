@@ -1,14 +1,78 @@
 // Outgoing microphone chain, plugged into LiveKit as a track processor:
 //
-//   device → [RNNoise] → input gain → (analyser tap) → gate → published track
+//   device → mono → rumble filter → [denoiser] → input gain → (analyser tap)
+//          → gate → [voice effect] → published track
 //
+// The denoiser is DeepFilterNet3 ("deep": removes keyboards, fans, street and
+// room noise, the closest open model to Krisp), RNNoise ("rnnoise": lighter,
+// for weak devices) or nothing (the browser's own suppressor or off).
 // The gate implements voice activation ("sensitivity") and push-to-talk by
 // ramping gain — instant, glitch-free, and no track republish/renegotiation.
 // The analyser sits before the gate, so we can still tell the user they're
-// talking into a muted mic.
+// talking into a muted mic. The voice effect comes last, so echo and reverb
+// tails ring out after the gate closes.
 import type { Track } from "livekit-client";
 import type { AudioProcessorOptions, TrackProcessor } from "livekit-client";
 import { settings } from "../../store/settings";
+import { buildEffect, type EffectGraph, type VoiceEffect } from "./effects";
+
+// DeepFilterNet3: the WASM runtime and the model ship with the app (public/df3),
+// nothing is fetched from third-party servers.
+type DeepCore = import("deepfilternet3-noise-filter").DeepFilterNet3Core;
+let deepCore: Promise<DeepCore> | null = null;
+
+// The model's runtime asks for random bytes (hash-map seeds, nothing secret),
+// but an AudioWorklet has no `crypto` — without this it silently passes audio
+// through unprocessed. Loaded into the worklet scope before the model.
+let shimUrl: string | null = null;
+const cryptoShimUrl = () =>
+  (shimUrl ??= URL.createObjectURL(
+    new Blob(
+      ['if (typeof globalThis.crypto === "undefined") globalThis.crypto = { getRandomValues(a) { for (let i = 0; i < a.length; i++) a[i] = (Math.random() * 256) | 0; return a; } };'],
+      { type: "application/javascript" }
+    )
+  ));
+
+/** The model archive exactly as published (gzip). Some servers add Content-Encoding to it and the browser unpacks it on the way — pack it back. */
+async function modelBytes(url: string): Promise<ArrayBuffer> {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`DeepFilterNet model: HTTP ${res.status}`);
+  const buf = await res.arrayBuffer();
+  const head = new Uint8Array(buf, 0, 2);
+  if (head[0] === 0x1f && head[1] === 0x8b) return buf;
+  return new Response(new Blob([buf]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer();
+}
+
+export async function deepFilterNode(ctx: AudioContext): Promise<AudioNode> {
+  deepCore ??= (async () => {
+    const { DeepFilterNet3Core } = await import("deepfilternet3-noise-filter");
+    // 100 dB attenuation limit = remove the noise completely.
+    const core = new DeepFilterNet3Core({ sampleRate: 48_000, noiseReductionLevel: 100 });
+    // Load from the app's own files instead of the package's CDN.
+    const base = new URL("./df3/", document.baseURI);
+    const wasm = new URL("df_bg.wasm", base).href;
+    const model = new URL("DeepFilterNet3.bin", base).href;
+    (core as unknown as { assetLoader: unknown }).assetLoader = {
+      getAssetUrls: () => ({ wasm, model }),
+      fetchAsset: async (url: string) => {
+        if (url === model) return modelBytes(url);
+        const res = await fetch(url);
+        if (!res.ok) throw new Error(`DeepFilterNet runtime: HTTP ${res.status}`);
+        return res.arrayBuffer();
+      },
+    };
+    await core.initialize();
+    return core;
+  })();
+  try {
+    const core = await deepCore;
+    await ctx.audioWorklet.addModule(cryptoShimUrl());
+    return await core.createAudioWorkletNode(ctx);
+  } catch (e) {
+    deepCore = null; // a failed download may work next time
+    throw e;
+  }
+}
 
 let rnnoiseWasm: Promise<ArrayBuffer> | null = null;
 
@@ -53,6 +117,8 @@ export class MicProcessor implements TrackProcessor<Track.Kind.Audio, AudioProce
   private input: GainNode | null = null;
   private gate: GainNode | null = null;
   private analyser: AnalyserNode | null = null;
+  private dest: MediaStreamAudioDestinationNode | null = null;
+  private fx: EffectGraph | null = null;
   private buf: Float32Array<ArrayBuffer> | null = null;
   private timer: ReturnType<typeof setInterval> | null = null;
   /** Bumped by every teardown: a build still awaiting RNNoise knows it was cancelled. */
@@ -84,6 +150,24 @@ export class MicProcessor implements TrackProcessor<Track.Kind.Audio, AudioProce
     if (this.input) this.input.gain.value = Math.min(2, Math.max(0, percent / 100));
   }
 
+  /** Swap the voice effect while talking (no republish). */
+  setEffect(effect: VoiceEffect) {
+    const { ctx, gate, dest } = this;
+    if (!ctx || !gate || !dest) return;
+    try {
+      gate.disconnect();
+    } catch {
+      /* not connected yet */
+    }
+    this.fx?.dispose();
+    this.fx = buildEffect(ctx, effect);
+    gate.connect(this.fx.input);
+    this.fx.output.connect(dest);
+  }
+
+  /** Which denoiser actually runs (the deep one falls back to RNNoise if it can't load). */
+  denoiser: "deep" | "rnnoise" | "none" = "none";
+
   private async build(track: MediaStreamTrack) {
     const gen = this.generation;
     // RNNoise is trained at 48 kHz — run our own context at that rate.
@@ -91,10 +175,30 @@ export class MicProcessor implements TrackProcessor<Track.Kind.Audio, AudioProce
     this.ctx = ctx;
     const src = ctx.createMediaStreamSource(new MediaStream([track]));
     const mono = monoNode(ctx);
-    src.connect(mono);
-    let head: AudioNode = mono;
-    this.nodes = [src, mono];
-    if (settings().noise === "rnnoise") {
+    // Rumble below the voice (desk bumps, hum) only confuses the denoiser and the gate.
+    const rumble = ctx.createBiquadFilter();
+    rumble.type = "highpass";
+    rumble.frequency.value = 85;
+    src.connect(mono).connect(rumble);
+    let head: AudioNode = rumble;
+    this.nodes = [src, mono, rumble];
+    this.denoiser = "none";
+    let mode = settings().noise;
+    if (mode === "deep") {
+      try {
+        const df = await deepFilterNode(ctx);
+        if (gen !== this.generation) return;
+        head.connect(df);
+        head = df;
+        this.nodes.push(df);
+        this.denoiser = "deep";
+      } catch (e) {
+        if (gen !== this.generation) return;
+        console.warn("[mic] DeepFilterNet unavailable, falling back to RNNoise", e);
+        mode = "rnnoise";
+      }
+    }
+    if (mode === "rnnoise") {
       try {
         const rn = await rnnoiseNode(ctx);
         // Left the channel while the model loaded: the context is closed, stop here.
@@ -102,6 +206,7 @@ export class MicProcessor implements TrackProcessor<Track.Kind.Audio, AudioProce
         head.connect(rn);
         head = rn;
         this.nodes.push(rn);
+        this.denoiser = "rnnoise";
       } catch (e) {
         if (gen !== this.generation) return;
         console.warn("[mic] RNNoise unavailable, continuing without it", e);
@@ -119,11 +224,12 @@ export class MicProcessor implements TrackProcessor<Track.Kind.Audio, AudioProce
     head.connect(input);
     input.connect(analyser);
     input.connect(gate);
-    gate.connect(dest);
     this.nodes.push(input, analyser, gate, dest);
     this.input = input;
     this.gate = gate;
     this.analyser = analyser;
+    this.dest = dest;
+    this.setEffect(settings().voiceEffect);
     this.buf = new Float32Array(analyser.fftSize);
     this.processedTrack = dest.stream.getAudioTracks()[0];
     void ctx.resume().catch(() => {});
@@ -184,6 +290,9 @@ export class MicProcessor implements TrackProcessor<Track.Kind.Audio, AudioProce
       (n as { destroy?: () => void }).destroy?.();
     }
     this.nodes = [];
+    this.fx?.dispose();
+    this.fx = null;
+    this.dest = null;
     this.processedTrack?.stop();
     this.processedTrack = undefined;
     const ctx = this.ctx;

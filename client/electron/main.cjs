@@ -110,8 +110,11 @@ function createWindow() {
   if (st.maximized) win.maximize();
   win.once("ready-to-show", () => win?.show());
 
-  if (DEV_URL) win.loadURL(DEV_URL);
-  else win.loadURL(APP_URL);
+  // Started by a concord-nova:// link: open straight on that invite.
+  const startCode = inviteCode(process.argv.find((a) => a.startsWith("concord-nova://")));
+  const hash = startCode ? `#/invite/${startCode}` : "";
+  if (DEV_URL) win.loadURL(DEV_URL + hash);
+  else win.loadURL(APP_URL + hash);
 
   win.on("maximize", () => win?.webContents.send("win:maximized", true));
   win.on("unmaximize", () => win?.webContents.send("win:maximized", false));
@@ -165,9 +168,15 @@ function debounce(fn, ms) {
   };
 }
 
+const inviteCode = (link) => /invite\/([\w-]+)/.exec(link ?? "")?.[1];
+
 function handleDeepLink(link) {
-  const m = /invite\/([\w-]+)/.exec(link);
-  if (m && win) void win.webContents.executeJavaScript(`location.hash = "#/invite/${m[1]}"`);
+  const code = inviteCode(link);
+  if (!code || !win) return;
+  void win.webContents.executeJavaScript(
+    `try { sessionStorage.setItem("nova.invite", "${code}") } catch {}
+     if (document.querySelector("[data-shell]")) location.hash = "#/invite/${code}"; else location.reload();`
+  );
 }
 
 // ── tray ─────────────────────────────────────────────────────────────────────

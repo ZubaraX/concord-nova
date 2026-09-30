@@ -476,6 +476,30 @@ describe("android push", () => {
   });
 });
 
+describe("profile style", () => {
+  it("decoration, effect and a second colour are saved and shown to others", async () => {
+    const style = { decoration: "crown", profileEffect: "waves", accentColor: 0x7a3cff, accentColor2: 0xff5c9a };
+    const saved = await api("PATCH", "/api/users/@me", alice.token, style);
+    expect(saved.status).toBe(200);
+    expect(saved.body).toMatchObject(style);
+    // Another user sees it in the profile — and the decoration travels with every user object (message authors too).
+    const viewer = await register("gina");
+    const seen = await api("GET", `/api/users/${alice.id}/profile`, viewer.token);
+    expect(seen.body.user).toMatchObject(style);
+    const msg = await api<MessageDTO>("POST", `/api/channels/${general}/messages`, alice.token, { content: "look at my crown" });
+    expect(msg.body.author.decoration).toBe("crown");
+    // Cleared with null; ids are plain preset slugs, nothing else gets stored.
+    expect((await api("PATCH", "/api/users/@me", alice.token, { decoration: null, profileEffect: null, accentColor2: null })).body).toMatchObject({ decoration: null, profileEffect: null, accentColor2: null });
+    expect((await api("PATCH", "/api/users/@me", alice.token, { decoration: "<svg onload=alert(1)>" })).status).toBe(400);
+  });
+
+  it("the server says where to download the apps", async () => {
+    const info = await api<{ downloads: { windows: string; android: string } }>("GET", "/api/auth/info");
+    expect(info.body.downloads.windows).toMatch(/^https:\/\//);
+    expect(info.body.downloads.android).toMatch(/\.apk$/);
+  });
+});
+
 describe("apps and links", () => {
   // The desktop app (app://nova) and the Android WebView call the API cross-origin:
   // every method the client uses must pass the CORS preflight.

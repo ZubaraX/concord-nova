@@ -25,5 +25,6 @@ export function serverInfo(): ServerInfoDTO {
     registration: instance.registration,
     mail: mailEnabled,
     webBuild,
+    downloads: { windows: config.DOWNLOAD_WINDOWS_URL || null, android: config.DOWNLOAD_ANDROID_URL || null },
   };
 }

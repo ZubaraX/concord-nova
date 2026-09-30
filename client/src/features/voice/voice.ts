@@ -50,6 +50,8 @@ export interface VoiceStore {
   joinedAt: number | null;
   focus: { userId: string; source: "camera" | "screen" } | null;
   reactions: { id: number; userId: string; emoji: string; x: number }[];
+  /** The denoiser actually running on the microphone ("deep" falls back to "rnnoise" if it can't load). */
+  denoiser: "deep" | "rnnoise" | "none";
 }
 
 export const useVoice = create<VoiceStore>(() => ({
@@ -68,6 +70,7 @@ export const useVoice = create<VoiceStore>(() => ({
   joinedAt: null,
   focus: null,
   reactions: [],
+  denoiser: "none",
 }));
 
 const V = () => useVoice.getState();
@@ -105,7 +108,7 @@ function applyVolume(p: RemoteParticipant) {
   const localMuted = !!s.localMutes[p.identity];
   const master = (s.outputVolume ?? 100) / 100;
   const v = deaf || localMuted ? 0 : ((s.userVolumes[p.identity] ?? 100) / 100) * master;
-  const sv = deaf ? 0 : ((s.streamVolumes[p.identity] ?? 100) / 100) * master;
+  const sv = deaf || localMuted ? 0 : ((s.streamVolumes[p.identity] ?? 100) / 100) * master;
   p.setVolume(v, Track.Source.Microphone);
   p.setVolume(sv, Track.Source.ScreenShareAudio);
 }
@@ -118,6 +121,7 @@ useSettings.subscribe((s, prev) => {
   if (s.userVolumes !== prev.userVolumes || s.streamVolumes !== prev.streamVolumes || s.localMutes !== prev.localMutes || s.outputVolume !== prev.outputVolume) applyAllVolumes();
   if (s.outputDevice !== prev.outputDevice && room) void room.switchActiveDevice("audiooutput", s.outputDevice ?? "default").catch(() => {});
   if (s.inputVolume !== prev.inputVolume) mic?.setInputVolume(s.inputVolume);
+  if (s.voiceEffect !== prev.voiceEffect) mic?.setEffect(s.voiceEffect);
   if ((s.noise !== prev.noise || s.echoCancellation !== prev.echoCancellation || s.autoGain !== prev.autoGain || s.inputDevice !== prev.inputDevice) && room) void restartMic();
 });
 
@@ -127,7 +131,7 @@ function micCapture() {
   return {
     deviceId: s.inputDevice ?? undefined,
     echoCancellation: s.echoCancellation,
-    // RNNoise replaces the browser suppressor — never double-process.
+    // Our own denoiser replaces the browser suppressor — never double-process.
     noiseSuppression: s.noise === "standard",
     autoGainControl: s.autoGain,
     channelCount: 1,
@@ -145,6 +149,7 @@ async function publishMic() {
     const pub = room.localParticipant.getTrackPublication(Track.Source.Microphone) as LocalTrackPublication | undefined;
     const track = pub?.track as LocalAudioTrack | undefined;
     if (track) await track.setProcessor(mic);
+    setV({ denoiser: mic.denoiser });
   } catch (e) {
     const name = (e as Error)?.name;
     if (name === "NotAllowedError" || name === "SecurityError") toast(t("errors.microphone_denied"), "error");

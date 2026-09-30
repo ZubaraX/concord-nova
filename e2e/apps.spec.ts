@@ -71,6 +71,12 @@ test("invite links: in the app they open the join dialog; the web page itself lo
   expect(tabs, "no browser tab for an invite to this server").toEqual([]);
   noErrors(b);
 
+  // Someone without the app opens the link in a browser: "open in the app" and a download link.
+  const visitor = await openAs(browser, null, `/#/invite/${invite}`);
+  await expect(visitor.page.getByRole("button", { name: "Открыть в приложении" })).toBeVisible();
+  await expect(visitor.page.getByRole("link", { name: /Скачать для Windows/ })).toHaveAttribute("href", /^https:\/\//);
+  noErrors(visitor);
+
   // The server's own web page (production build) at /invite/CODE: it used to
   // look for its scripts under /invite/assets/… and stay blank.
   test.skip(!!process.env.E2E_URL && !process.env.E2E_API_URL, "needs the API address");

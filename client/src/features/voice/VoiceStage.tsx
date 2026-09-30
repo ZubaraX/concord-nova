@@ -18,6 +18,7 @@ import {
   SmilePlus,
   SwitchCamera,
   Volume2,
+  VolumeX,
   UserPlus,
   PictureInPicture2,
   Settings2,
@@ -32,7 +33,7 @@ import { useUI } from "../../store/ui";
 import { Popover, Tooltip, useContextMenu, usePopover, MenuList } from "../../components/ui/overlay";
 import { Slider } from "../../components/ui/primitives";
 import { UserAvatar } from "../../components/ui/avatar";
-import { userMenu } from "../shell/menus";
+import { toggleLocalMute, userMenu } from "../shell/menus";
 import { PingButton } from "./ConnectionStats";
 import { flipCamera, isLocal, joinVoice, leaveVoice, sendReaction, toggleCamera, toggleDeafen, toggleMute, toggleScreen, trackFor, useVoice } from "./voice";
 import { useAura } from "./levels";
@@ -72,6 +73,13 @@ const Tile = memo(function Tile({ spec, focused, small, onFocus, guildId }: { sp
   const track = spec.source === "camera" || spec.source === "screen" ? trackFor(spec.userId, spec.source) : undefined;
   const muted = vs?.selfMute || vs?.serverMute;
   const deaf = vs?.selfDeaf || vs?.serverDeaf;
+  const localMuted = useSettings((s) => !!s.localMutes[spec.userId]);
+  const toggleFullscreen = () => {
+    const el = tileRef.current;
+    if (!el) return;
+    if (document.fullscreenElement === el) void document.exitFullscreen();
+    else void el.requestFullscreen().catch(() => {});
+  };
 
   return (
     <div
@@ -109,22 +117,45 @@ const Tile = memo(function Tile({ spec, focused, small, onFocus, guildId }: { sp
         {ringing && <span className="shrink-0 font-medium text-fg-3">· {t("call.calling")}</span>}
         {spec.source !== "screen" && muted &&<MicOff size={13} className={clsx("shrink-0", vs?.serverMute ? "text-bad" : "text-fg-2")} />}
         {spec.source !== "screen" && deaf && <HeadphoneOff size={13} className="shrink-0 text-fg-2" />}
+        {localMuted && !me && (
+          <span title={t("voice.localMuted")} className="flex shrink-0">
+            <VolumeX size={13} className="text-bad" />
+          </span>
+        )}
       </div>
       {quality === "poor" || quality === "lost" ? (
         <span className="absolute right-2 top-2 rounded-md bg-warn/90 px-1.5 text-[10.5px] font-bold leading-5 text-[#1a1200]">{quality === "lost" ? "!" : "⚠"}</span>
       ) : null}
       {!small && track && (
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            const v = (e.currentTarget.parentElement as HTMLElement).querySelector("video");
-            if (v && document.pictureInPictureEnabled) void v.requestPictureInPicture().catch(() => {});
-          }}
-          className="absolute right-2 top-2 rounded-lg bg-canvas/75 p-1.5 text-fg-2 opacity-0 transition-opacity hover:text-fg group-hover:opacity-100"
-          aria-label={t("voice.popout")}
-        >
-          <PictureInPicture2 size={15} />
-        </button>
+        // Always visible on touch screens, where there is no hover.
+        <div className="absolute right-2 top-2 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 [@media(hover:none)]:opacity-100">
+          {document.fullscreenEnabled && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                toggleFullscreen();
+              }}
+              className="rounded-lg bg-canvas/75 p-1.5 text-fg-2 hover:text-fg"
+              aria-label={t("voice.fullscreen")}
+              title={t("voice.fullscreen")}
+            >
+              <Maximize2 size={15} />
+            </button>
+          )}
+          {document.pictureInPictureEnabled && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                void tileRef.current?.querySelector("video")?.requestPictureInPicture().catch(() => {});
+              }}
+              className="rounded-lg bg-canvas/75 p-1.5 text-fg-2 hover:text-fg"
+              aria-label={t("voice.popout")}
+              title={t("voice.popout")}
+            >
+              <PictureInPicture2 size={15} />
+            </button>
+          )}
+        </div>
       )}
     </div>
   );
@@ -347,7 +378,7 @@ function Controls({
             </button>
           </Tooltip>
         )}
-        {!mobile && !compact && (
+        {!mobile && (
           <Tooltip content={fullscreen ? t("voice.exitFullscreen") : t("voice.fullscreen")}>
             <button onClick={onFullscreen} className={clsx(btn, neutral)} aria-label={t("voice.fullscreen")}>
               {fullscreen ? <Minimize2 size={20} /> : <Maximize2 size={20} />}
@@ -395,6 +426,7 @@ export function UserVolume({ userId }: { userId: string }) {
   const vol = useSettings((s) => s.userVolumes[userId] ?? 100);
   const svol = useSettings((s) => s.streamVolumes[userId] ?? 100);
   const streaming = useData((s) => !!s.voiceStates[userId]?.selfStream);
+  const localMuted = useSettings((s) => !!s.localMutes[userId]);
   if (isLocal(userId)) return null;
   return (
     <div className="flex flex-col gap-2">
@@ -402,6 +434,13 @@ export function UserVolume({ userId }: { userId: string }) {
         <Volume2 size={14} /> {t("voice.volume")}
       </div>
       <Slider value={vol} min={0} max={200} onChange={(v) => settings().setLocal({ userVolumes: { ...settings().userVolumes, [userId]: v } })} format={(v) => `${v}%`} />
+      <button
+        onClick={() => toggleLocalMute(userId)}
+        className={clsx("flex items-center justify-center gap-2 rounded-lg px-3 py-2 text-[13px] font-semibold transition-colors", localMuted ? "bg-bad/15 text-bad hover:bg-bad/25" : "bg-raised text-fg-2 hover:bg-overlay hover:text-fg")}
+      >
+        {localMuted ? <Volume2 size={14} /> : <VolumeX size={14} />}
+        {localMuted ? t("voice.localUnmute") : t("voice.localMute")}
+      </button>
       {streaming && (
         <>
           <div className="text-[13px] font-semibold text-fg-2">{t("voice.streamVolume")}</div>

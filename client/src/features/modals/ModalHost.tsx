@@ -9,6 +9,7 @@ import {
   CustomStatusModal,
   InviteModal,
   NewDmModal,
+  NickModal,
   PollModal,
   ScheduleModal,
   TimeoutModal,
@@ -68,6 +69,8 @@ function render(m: ModalState, close: () => void) {
       return <BanModal guildId={m.guildId} userId={m.userId} onClose={close} />;
     case "timeout":
       return <TimeoutModal guildId={m.guildId} userId={m.userId} onClose={close} />;
+    case "nick":
+      return <NickModal guildId={m.guildId} userId={m.userId} onClose={close} />;
     case "screenPicker":
       return <ScreenPickerModal resolve={m.resolve} onClose={close} />;
     default:

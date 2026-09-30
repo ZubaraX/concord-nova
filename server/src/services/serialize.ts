@@ -28,19 +28,20 @@ export const userSelect = {
   displayName: true,
   avatar: true,
   accentColor: true,
+  decoration: true,
   flags: true,
 } as const satisfies Prisma.UserSelect;
 
 type UserRow = Prisma.UserGetPayload<{ select: typeof userSelect }>;
 
 export function toUser(u: UserRow): UserDTO {
-  return { id: u.id, username: u.username, displayName: u.displayName, avatar: u.avatar, accentColor: u.accentColor, flags: u.flags };
+  return { id: u.id, username: u.username, displayName: u.displayName, avatar: u.avatar, accentColor: u.accentColor, decoration: u.decoration, flags: u.flags };
 }
 
-export const profileSelect = { ...userSelect, banner: true, bio: true, pronouns: true, createdAt: true } as const satisfies Prisma.UserSelect;
+export const profileSelect = { ...userSelect, banner: true, bio: true, pronouns: true, accentColor2: true, profileEffect: true, createdAt: true } as const satisfies Prisma.UserSelect;
 
 export function toProfile(u: Prisma.UserGetPayload<{ select: typeof profileSelect }>): ProfileDTO {
-  return { ...toUser(u), banner: u.banner, bio: u.bio, pronouns: u.pronouns, createdAt: u.createdAt.toISOString() };
+  return { ...toUser(u), banner: u.banner, bio: u.bio, pronouns: u.pronouns, accentColor2: u.accentColor2, profileEffect: u.profileEffect, createdAt: u.createdAt.toISOString() };
 }
 
 export function toSelf(u: Prisma.UserGetPayload<object>): SelfUserDTO {

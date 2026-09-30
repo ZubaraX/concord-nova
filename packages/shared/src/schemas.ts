@@ -8,6 +8,8 @@ const zBits = z.string().regex(/^\d{1,30}$/, "invalid_permissions");
 /** Paths we host ourselves — avatars etc. may never point off-server. */
 const zOwnFile = z.string().max(300).regex(/^\/files\/[\w./-]+$/, "invalid_file");
 const zColor = z.number().int().min(0).max(0xffffff);
+/** Id of a built-in cosmetic preset (avatar decoration, profile effect). */
+const zPreset = z.string().regex(/^[a-z0-9-]{1,32}$/);
 
 export const usernameSchema = z
   .string()
@@ -42,6 +44,9 @@ export const profileUpdateSchema = z.object({
   bio: z.string().max(LIMITS.bioMax).nullable().optional(),
   pronouns: z.string().max(LIMITS.pronounsMax).nullable().optional(),
   accentColor: zColor.nullable().optional(),
+  accentColor2: zColor.nullable().optional(),
+  decoration: zPreset.nullable().optional(),
+  profileEffect: zPreset.nullable().optional(),
 });
 export type ProfileUpdateInput = z.infer<typeof profileUpdateSchema>;
 

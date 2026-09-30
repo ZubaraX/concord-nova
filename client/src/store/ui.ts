@@ -23,6 +23,7 @@ export type Modal =
   | { kind: "status" }
   | { kind: "ban"; guildId: string; userId: string }
   | { kind: "timeout"; guildId: string; userId: string }
+  | { kind: "nick"; guildId: string; userId: string }
   | { kind: "screenPicker"; resolve: (r: { id: string | null; audio: boolean } | null) => void };
 
 export type SidePanel = "members" | "pins" | "search" | "thread" | "inbox" | "bookmarks" | null;

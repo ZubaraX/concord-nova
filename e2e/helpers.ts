@@ -61,7 +61,7 @@ export async function befriend(request: APIRequestContext, a: User, b: User) {
 }
 
 // Console noise that isn't an app bug (network probes, media stack chatter).
-const IGNORED = [/favicon/i, /Failed to load resource: the server responded with a status of 40[134]/i, /\[livekit\]/i, /ResizeObserver loop/i, /net::ERR_ABORTED/i];
+const IGNORED = [/registered handler/i, /favicon/i, /Failed to load resource: the server responded with a status of 40[134]/i, /\[livekit\]/i, /ResizeObserver loop/i, /net::ERR_ABORTED/i];
 
 export interface Session {
   context: BrowserContext;
@@ -74,7 +74,7 @@ export async function openAs(
   browser: Browser,
   user: User | null,
   path = "/",
-  opts: { viewport?: { width: number; height: number }; desktop?: boolean; /** Call the API on this address (cross-origin, like the desktop and Android apps). */ server?: string } = {}
+  opts: { viewport?: { width: number; height: number }; desktop?: boolean; /** Call the API on this address (cross-origin, like the desktop and Android apps). */ server?: string; /** Device-local settings to start with (e.g. { noise: "off" }). */ local?: Record<string, unknown> } = {}
 ): Promise<Session> {
   const context = await browser.newContext({
     baseURL: BASE,
@@ -94,6 +94,7 @@ export async function openAs(
       [user.access, user.refresh]
     );
   }
+  if (opts.local) await context.addInitScript((l) => localStorage.setItem("nova.settings.local", JSON.stringify({ localVersion: 1, ...l })), opts.local);
   if (opts.desktop) await context.addInitScript(stubDesktopBridge);
   if (opts.server) await context.addInitScript((url) => localStorage.setItem("nova.server", url), opts.server);
   const page = await context.newPage();

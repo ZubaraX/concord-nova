@@ -6,6 +6,7 @@ import { api, ApiError } from "../../lib/api";
 import { errorText, t } from "../../lib/i18n";
 import { canChangeServer, hasServer, normalizeServer, serverBase, setServerBase } from "../../lib/server";
 import { pendingInvite } from "../../lib/deeplink";
+import { OpenInApp } from "../../components/ui/OpenInApp";
 import { login, register } from "../../store/session";
 import { Button, Input } from "../../components/ui/primitives";
 import { NovaStar, Wordmark } from "../../components/Logo";
@@ -59,6 +60,7 @@ export function AuthScreen() {
               </div>
             )}
             {invite && <InviteBanner invite={invite} />}
+            {inviteFromUrl && <OpenInApp code={inviteFromUrl} downloads={info?.downloads} className="-mt-3 mb-5" />}
             <AnimatePresence mode="wait" initial={false}>
               <motion.div key={needServer ? "server" : mode} initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} exit={{ opacity: 0, x: -12 }} transition={{ duration: 0.18 }}>
                 {needServer ? (

@@ -17,6 +17,8 @@ export interface UserDTO {
   displayName: string | null;
   avatar: string | null;
   accentColor: number | null;
+  /** Avatar decoration: id of a built-in preset (unknown ids are ignored by clients). */
+  decoration: string | null;
   flags: number;
 }
 
@@ -24,6 +26,10 @@ export interface ProfileDTO extends UserDTO {
   banner: string | null;
   bio: string | null;
   pronouns: string | null;
+  /** With accentColor: the two ends of the profile gradient. */
+  accentColor2: number | null;
+  /** Animated profile effect: id of a built-in preset. */
+  profileEffect: string | null;
   createdAt: string;
 }
 
@@ -335,6 +341,8 @@ export interface ServerInfoDTO {
   mail: boolean;
   /** Build id of the web client this server serves (null in dev) — open tabs compare it to offer a reload. */
   webBuild: string | null;
+  /** Where to get the apps (shown to people who open an invite in a browser). */
+  downloads?: { windows: string | null; android: string | null };
 }
 
 // ── instance administration ────────────────────────────────────────────────

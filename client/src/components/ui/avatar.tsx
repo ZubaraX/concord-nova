@@ -4,6 +4,7 @@ import { Smartphone } from "lucide-react";
 import type { PresenceStatus } from "@nova/shared";
 import { mediaUrl } from "../../lib/server";
 import { useData } from "../../store/data";
+import { AvatarDecoration } from "./cosmetics";
 
 const PALETTE = ["#6d7cff", "#f0768b", "#3ac3a3", "#f2a541", "#b67cf5", "#4cb4ea", "#e4648f", "#7ccf6e"];
 
@@ -91,7 +92,7 @@ export const Avatar = memo(function Avatar({ userId, src, name, size = 40, statu
 });
 
 /** Avatar bound to live user + presence data. */
-export function UserAvatar({ userId, size = 40, showStatus = true, className, statusRing, speaking }: { userId: string; size?: number; showStatus?: boolean; className?: string; statusRing?: string; speaking?: boolean }) {
+export function UserAvatar({ userId, size = 40, showStatus = true, className, statusRing, speaking, decor = true }: { userId: string; size?: number; showStatus?: boolean; className?: string; statusRing?: string; speaking?: boolean; /** Draw the user's avatar decoration. */ decor?: boolean }) {
   const user = useData((s) => s.users[userId]);
   const presence = useData((s) => (showStatus ? s.presences[userId] : undefined));
   const status: PresenceStatus | null = showStatus ? presence?.status ?? "offline" : null;
@@ -99,8 +100,9 @@ export function UserAvatar({ userId, size = 40, showStatus = true, className, st
   return (
     <div className={clsx("relative shrink-0", className)} style={{ width: size, height: size }}>
       <Avatar userId={userId} src={user?.avatar} name={user?.displayName || user?.username || "?"} size={size} speaking={speaking} />
+      {decor && <AvatarDecoration id={user?.decoration} size={size} />}
       {status && (
-        <span className="absolute" style={{ right: -2, bottom: -2 }}>
+        <span className="absolute z-[2]" style={{ right: -2, bottom: -2 }}>
           <StatusDot status={status} mobile={mobile} size={Math.max(10, Math.round(size * 0.3))} ring={statusRing} />
         </span>
       )}

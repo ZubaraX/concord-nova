@@ -87,7 +87,15 @@ export function useLocale(): Locale {
 
 /** Translate an API error code (falls back to the server message / generic text). */
 export function errorText(e: unknown): string {
-  const err = e as { code?: string; message?: string; retryAfter?: number };
+  const err = e as { code?: string; message?: string; retryAfter?: number; fields?: Record<string, string> };
+  // A rejected form: say what is wrong with the field when we have words for it.
+  if (err?.code === "validation_failed" && err.fields) {
+    for (const code of Object.values(err.fields)) {
+      const key = `errors.${code}`;
+      const s = t(key);
+      if (s !== key) return s;
+    }
+  }
   if (err?.code) {
     const key = `errors.${err.code}`;
     const s = t(key, { s: err.retryAfter ?? 1 });
