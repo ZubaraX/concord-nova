@@ -123,6 +123,9 @@ if (argv.includes("--dry-run")) {
 }
 console.log(`▶ uploading to ${target} and running deploy/setup.sh${env.length ? ` (${env.join(" ")})` : ""}…\n`);
 const ssh = spawn("ssh", sshArgs, { stdio: ["pipe", "inherit", "inherit"] });
+// If ssh gives up (wrong password, too slow to type it), it closes our pipe
+// mid-upload: not a crash — the exit code below explains it.
+ssh.stdin.on("error", () => {});
 ssh.stdin.end(archive);
 ssh.on("error", (e) => {
   console.error(`✖ could not start ssh: ${e.message}`);
@@ -130,6 +133,12 @@ ssh.on("error", (e) => {
 });
 ssh.on("exit", (code) => {
   if (code === 0) console.log("\n✅ deployed");
+  else if (code === 255)
+    console.error(
+      "\n✖ Сервер закрыл SSH-соединение до начала обновления.\n" +
+        "  Чаще всего: неверный пароль (после смены пароля вводите НОВЫЙ) или ввод занял больше ~2 минут.\n" +
+        "  Запустите deploy-server.cmd ещё раз и введите пароль сразу, как только ssh его спросит."
+    );
   else console.error(`\n✖ remote setup exited with ${code} — see the output above`);
   process.exit(code ?? 1);
 });
