@@ -14,10 +14,13 @@ import {
   Track,
   VideoPresets,
   type LocalTrackPublication,
+  type LocalTrack,
   type Participant,
   type RemoteParticipant,
   type RemoteTrack,
   type RemoteTrackPublication,
+  type RemoteAudioTrack,
+  type TrackPublication,
   type ScreenShareCaptureOptions,
   type TrackPublishOptions,
 } from "livekit-client";
@@ -59,6 +62,8 @@ export interface VoiceStore {
   aloneSince: number | null;
   /** The microphone check in settings is running: the call doesn't get the microphone meanwhile. */
   micTest: boolean;
+  /** Whose screen share you chose to watch (unwatched streams aren't downloaded at all). */
+  watching: Record<string, boolean>;
 }
 
 export const useVoice = create<VoiceStore>(() => ({
@@ -80,6 +85,7 @@ export const useVoice = create<VoiceStore>(() => ({
   denoiser: "none",
   aloneSince: null,
   micTest: false,
+  watching: {},
 }));
 
 const V = () => useVoice.getState();
@@ -117,9 +123,22 @@ function applyVolume(p: RemoteParticipant) {
   const localMuted = !!s.localMutes[p.identity];
   const master = (s.outputVolume ?? 100) / 100;
   const v = deaf || localMuted ? 0 : ((s.userVolumes[p.identity] ?? 100) / 100) * master;
-  const sv = deaf || localMuted ? 0 : ((s.streamVolumes[p.identity] ?? 100) / 100) * master;
+  const sv = deaf || localMuted || s.streamMutes[p.identity] ? 0 : ((s.streamVolumes[p.identity] ?? 100) / 100) * master;
+  const bv = deaf || localMuted ? 0 : ((s.soundboardVolumes[p.identity] ?? 100) / 100) * ((s.soundboardVolume ?? 100) / 100) * master;
   p.setVolume(v, Track.Source.Microphone);
   p.setVolume(sv, Track.Source.ScreenShareAudio);
+  for (const pub of p.audioTrackPublications.values()) {
+    if (pub.trackName === SOUNDBOARD_TRACK && pub.track) (pub.track as RemoteAudioTrack).setVolume(bv);
+  }
+}
+
+/** Soundboard sounds travel as a track of their own, so everyone can set how loud they hear them. */
+export const SOUNDBOARD_TRACK = "soundboard";
+
+/** The voice itself — not the soundboard track, which is a microphone-source track too. */
+export function voicePublication(p: Participant): TrackPublication | undefined {
+  for (const pub of p.trackPublications.values()) if (pub.source === Track.Source.Microphone && pub.trackName !== SOUNDBOARD_TRACK) return pub;
+  return undefined;
 }
 
 export function applyAllVolumes() {
@@ -127,7 +146,8 @@ export function applyAllVolumes() {
 }
 
 useSettings.subscribe((s, prev) => {
-  if (s.userVolumes !== prev.userVolumes || s.streamVolumes !== prev.streamVolumes || s.localMutes !== prev.localMutes || s.outputVolume !== prev.outputVolume) applyAllVolumes();
+  if (s.userVolumes !== prev.userVolumes || s.streamVolumes !== prev.streamVolumes || s.streamMutes !== prev.streamMutes || s.soundboardVolumes !== prev.soundboardVolumes || s.soundboardVolume !== prev.soundboardVolume || s.localMutes !== prev.localMutes || s.outputVolume !== prev.outputVolume) applyAllVolumes();
+  if (s.autoWatchStreams !== prev.autoWatchStreams) syncSubscriptions();
   if (s.outputDevice !== prev.outputDevice && room) void room.switchActiveDevice("audiooutput", s.outputDevice ?? "default").catch(() => {});
   if (s.inputVolume !== prev.inputVolume) mic?.setInputVolume(s.inputVolume);
   if (s.voiceEffect !== prev.voiceEffect) mic?.setEffect(s.voiceEffect);
@@ -165,7 +185,7 @@ async function publishMic() {
   );
   try {
     await room.localParticipant.setMicrophoneEnabled(true, micCapture(), { dtx: true, red: true, audioPreset: { maxBitrate: 64_000 } } as TrackPublishOptions);
-    const pub = room.localParticipant.getTrackPublication(Track.Source.Microphone) as LocalTrackPublication | undefined;
+    const pub = voicePublication(room.localParticipant) as LocalTrackPublication | undefined;
     const track = pub?.track as LocalAudioTrack | undefined;
     if (track) await track.setProcessor(mic);
     setV({ denoiser: mic.denoiser });
@@ -179,8 +199,8 @@ async function publishMic() {
 
 async function restartMic() {
   if (!room) return;
-  const pub = room.localParticipant.getTrackPublication(Track.Source.Microphone);
-  if (pub?.track) await room.localParticipant.unpublishTrack(pub.track, true).catch(() => {});
+  const pub = voicePublication(room.localParticipant);
+  if (pub?.track) await room.localParticipant.unpublishTrack(pub.track as LocalTrack, true).catch(() => {});
   await mic?.destroy().catch(() => {});
   mic = null;
   await publishMic();
@@ -205,9 +225,90 @@ export function micLevel(): number {
 }
 
 /** Soundboard: plays a sound to everyone in the call through the microphone track. Null when nothing is being sent (no call, no microphone). */
-export function playIntoCall(buffer: AudioBuffer, gain: number): (() => void) | null {
-  if (!room || !mic || !room.localParticipant.getTrackPublication(Track.Source.Microphone)) return null;
+export async function playIntoCall(buffer: AudioBuffer, gain: number): Promise<(() => void) | null> {
+  if (!room) return null;
+  const out = await soundboardOutput();
+  if (out) {
+    const src = out.ctx.createBufferSource();
+    src.buffer = buffer;
+    const g = out.ctx.createGain();
+    g.gain.value = gain;
+    src.connect(g).connect(out.dest);
+    src.onended = () => g.disconnect();
+    src.start();
+    return () => {
+      try {
+        src.stop();
+      } catch {
+        /* already over */
+      }
+    };
+  }
+  // The separate track couldn't be published: mix the sound into the microphone,
+  // as before (others then can't set its volume apart from the voice).
+  if (!mic || !voicePublication(room.localParticipant)) return null;
   return mic.playClip(buffer, gain);
+}
+
+let board: { room: Room; ctx: AudioContext; dest: MediaStreamAudioDestinationNode; ready: Promise<boolean> } | null = null;
+
+/** The soundboard track, published on first use in a call (null if the server doesn't allow it). */
+async function soundboardOutput(): Promise<{ ctx: AudioContext; dest: MediaStreamAudioDestinationNode } | null> {
+  const r = room;
+  if (!r) return null;
+  if (!board || board.room !== r) {
+    closeSoundboard();
+    const ctx = new AudioContext({ sampleRate: 48_000, latencyHint: "interactive" });
+    const dest = ctx.createMediaStreamDestination();
+    const track = dest.stream.getAudioTracks()[0];
+    const ready = r.localParticipant
+      // A second microphone-source track: allowed by LiveKit, and a server mute takes it away with the voice.
+      .publishTrack(track, { name: SOUNDBOARD_TRACK, source: Track.Source.Microphone, dtx: true, red: false, audioPreset: AudioPresets.music })
+      .then(() => true)
+      .catch((e) => {
+        console.warn("[voice] soundboard track refused, mixing into the microphone", e);
+        return false;
+      });
+    board = { room: r, ctx, dest, ready };
+    void ctx.resume().catch(() => {});
+  }
+  const b = board;
+  return (await b.ready) && room === b.room ? b : null;
+}
+
+function closeSoundboard() {
+  const b = board;
+  board = null;
+  if (b) void b.ctx.close().catch(() => {});
+}
+
+// ── what to download ─────────────────────────────────────────────────────────
+const isStream = (pub: RemoteTrackPublication) => pub.source === Track.Source.ScreenShare || pub.source === Track.Source.ScreenShareAudio;
+
+/** Voices, cameras and soundboards always; a screen share only once you choose to watch it. */
+function decideSubscription(pub: RemoteTrackPublication, p: RemoteParticipant) {
+  const want = !isStream(pub) || !!V().watching[p.identity] || settings().autoWatchStreams;
+  if (pub.isSubscribed !== want || pub.isDesired !== want) pub.setSubscribed(want);
+}
+
+function syncSubscriptions() {
+  room?.remoteParticipants.forEach((p) => p.trackPublications.forEach((pub) => decideSubscription(pub as RemoteTrackPublication, p)));
+  bump();
+}
+
+/** Start or stop watching someone's screen share (its picture and its sound). */
+export function watchStream(userId: string, on: boolean) {
+  const watching = { ...V().watching };
+  if (on) watching[userId] = true;
+  else delete watching[userId];
+  const focus = on ? { userId, source: "screen" as const } : V().focus?.userId === userId && V().focus?.source === "screen" ? null : V().focus;
+  setV({ watching, focus });
+  syncSubscriptions();
+}
+
+/** Is this person's stream being shown to you (watched, or opened automatically)? */
+export function isWatching(userId: string): boolean {
+  return !!V().watching[userId] || settings().autoWatchStreams;
 }
 
 // ── leaving an empty call ────────────────────────────────────────────────────
@@ -289,8 +390,17 @@ function wire(r: Room) {
         audioEls.set(track.sid ?? String(Math.random()), el);
         applyVolume(p);
       }
-      if (track.source === Track.Source.ScreenShare && !V().focus) setV({ focus: { userId: p.identity, source: "screen" } });
+      if (track.source === Track.Source.ScreenShare && !V().focus && settings().autoWatchStreams) setV({ focus: { userId: p.identity, source: "screen" } });
       bump();
+    })
+    .on(RoomEvent.TrackPublished, (pub: RemoteTrackPublication, p: RemoteParticipant) => decideSubscription(pub, p))
+    .on(RoomEvent.TrackUnpublished, (pub: RemoteTrackPublication, p: RemoteParticipant) => {
+      // The stream ended: the next one asks again.
+      if (pub.source === Track.Source.ScreenShare && V().watching[p.identity]) {
+        const watching = { ...V().watching };
+        delete watching[p.identity];
+        setV({ watching });
+      }
     })
     .on(RoomEvent.TrackUnsubscribed, (track: RemoteTrack, _pub, p) => {
       for (const el of track.detach()) el.remove();
@@ -374,13 +484,14 @@ async function onDisconnected(reason?: DisconnectReason) {
 
 function cleanup() {
   stopAloneWatch();
+  closeSoundboard();
   for (const el of audioEls.values()) el.remove();
   audioEls.clear();
   void mic?.destroy().catch(() => {});
   mic = null;
   room?.removeAllListeners();
   room = null;
-  setV({ cameraOn: false, screenOn: false, speaking: {}, quality: {}, focus: null, talkingWhileMuted: false, needsAudioUnlock: false, reactions: [] });
+  setV({ cameraOn: false, screenOn: false, speaking: {}, quality: {}, focus: null, talkingWhileMuted: false, needsAudioUnlock: false, reactions: [], watching: {} });
   bump();
 }
 
@@ -418,7 +529,9 @@ export async function joinVoice(channelId: string, isRejoin = false) {
   room = r;
   wire(r);
   try {
-    await r.connect(voiceUrl(join.url), join.token, { autoSubscribe: true });
+    // Everything but screen shares is subscribed as it appears (decideSubscription).
+    await r.connect(voiceUrl(join.url), join.token, { autoSubscribe: false });
+    syncSubscriptions();
   } catch (e) {
     console.warn("[voice] connect failed", e);
     if (room === r) {

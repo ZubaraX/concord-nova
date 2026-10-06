@@ -22,6 +22,8 @@ import {
   UserPlus,
   PictureInPicture2,
   Settings2,
+  Eye,
+  EyeOff,
 } from "lucide-react";
 import type { Track } from "livekit-client";
 import { t } from "../../lib/i18n";
@@ -36,7 +38,15 @@ import { UserAvatar } from "../../components/ui/avatar";
 import { toggleLocalMute, userMenu } from "../shell/menus";
 import { PingButton } from "./ConnectionStats";
 import { SoundboardButton } from "./Soundboard";
-import { flipCamera, isLocal, joinVoice, leaveVoice, sendReaction, toggleCamera, toggleDeafen, toggleMute, toggleScreen, trackFor, useVoice } from "./voice";
+import { flipCamera, isLocal, joinVoice, leaveVoice, sendReaction, toggleCamera, toggleDeafen, toggleMute, toggleScreen, trackFor, useVoice, watchStream } from "./voice";
+
+/** Stream sound on/off for one person — the picture keeps playing. */
+export function toggleStreamSound(userId: string) {
+  const mutes = { ...settings().streamMutes };
+  if (mutes[userId]) delete mutes[userId];
+  else mutes[userId] = true;
+  settings().setLocal({ streamMutes: mutes });
+}
 import { useAura } from "./levels";
 
 // ── media ────────────────────────────────────────────────────────────────────
@@ -75,6 +85,11 @@ const Tile = memo(function Tile({ spec, focused, small, onFocus, guildId }: { sp
   const muted = vs?.selfMute || vs?.serverMute;
   const deaf = vs?.selfDeaf || vs?.serverDeaf;
   const localMuted = useSettings((s) => !!s.localMutes[spec.userId]);
+  const autoWatch = useSettings((s) => s.autoWatchStreams);
+  const watched = useVoice((s) => !!s.watching[spec.userId]) || autoWatch;
+  const streamMuted = useSettings((s) => !!s.streamMutes[spec.userId]);
+  // Somebody else's stream you haven't opened: nothing is downloaded until "Watch".
+  const offer = spec.source === "screen" && !me && !watched;
   const toggleFullscreen = () => {
     const el = tileRef.current;
     if (!el) return;
@@ -99,7 +114,21 @@ const Tile = memo(function Tile({ spec, focused, small, onFocus, guildId }: { sp
       data-source={spec.source}
       style={{ transition: "box-shadow 90ms linear" }}
     >
-      {track ? (
+      {offer ? (
+        <div className="flex flex-col items-center gap-3 px-3 text-center" data-stream-offer>
+          {!small && <UserAvatar userId={spec.userId} size={focused ? 96 : 56} showStatus={false} />}
+          {!small && <div className="text-[13.5px] font-semibold text-fg-2">{t("voice.streamOffer", { name })}</div>}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              watchStream(spec.userId, true);
+            }}
+            className="star-fill flex items-center gap-1.5 rounded-xl px-4 py-2 text-[13.5px] font-semibold"
+          >
+            <Eye size={15} /> {t("voice.watchStream")}
+          </button>
+        </div>
+      ) : track ? (
         <TrackVideo track={track} mirror={me && spec.source === "camera" && !isAndroid} contain={spec.source === "screen"} />
       ) : (
         <>
@@ -123,6 +152,11 @@ const Tile = memo(function Tile({ spec, focused, small, onFocus, guildId }: { sp
             <VolumeX size={13} className="text-bad" />
           </span>
         )}
+        {spec.source === "screen" && !me && watched && streamMuted && (
+          <span title={t("voice.streamMuted")} className="flex shrink-0">
+            <VolumeX size={13} className="text-bad" />
+          </span>
+        )}
       </div>
       {quality === "poor" || quality === "lost" ? (
         <span className="absolute right-2 top-2 rounded-md bg-warn/90 px-1.5 text-[10.5px] font-bold leading-5 text-[#1a1200]">{quality === "lost" ? "!" : "⚠"}</span>
@@ -130,6 +164,35 @@ const Tile = memo(function Tile({ spec, focused, small, onFocus, guildId }: { sp
       {!small && track && (
         // Always visible on touch screens, where there is no hover.
         <div className="absolute right-2 top-2 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 [@media(hover:none)]:opacity-100">
+          {spec.source === "screen" && !me && (
+            <>
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  toggleStreamSound(spec.userId);
+                }}
+                className={clsx("rounded-lg bg-canvas/75 p-1.5 hover:text-fg", streamMuted ? "text-bad" : "text-fg-2")}
+                aria-label={streamMuted ? t("voice.streamUnmute") : t("voice.streamMute")}
+                aria-pressed={streamMuted}
+                title={streamMuted ? t("voice.streamUnmute") : t("voice.streamMute")}
+              >
+                {streamMuted ? <VolumeX size={15} /> : <Volume2 size={15} />}
+              </button>
+              {!autoWatch && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    watchStream(spec.userId, false);
+                  }}
+                  className="rounded-lg bg-canvas/75 p-1.5 text-fg-2 hover:text-fg"
+                  aria-label={t("voice.stopWatching")}
+                  title={t("voice.stopWatching")}
+                >
+                  <EyeOff size={15} />
+                </button>
+              )}
+            </>
+          )}
           {document.fullscreenEnabled && (
             <button
               onClick={(e) => {
@@ -433,6 +496,8 @@ function Controls({
 export function UserVolume({ userId }: { userId: string }) {
   const vol = useSettings((s) => s.userVolumes[userId] ?? 100);
   const svol = useSettings((s) => s.streamVolumes[userId] ?? 100);
+  const bvol = useSettings((s) => s.soundboardVolumes[userId] ?? 100);
+  const streamMuted = useSettings((s) => !!s.streamMutes[userId]);
   const streaming = useData((s) => !!s.voiceStates[userId]?.selfStream);
   const localMuted = useSettings((s) => !!s.localMutes[userId]);
   if (isLocal(userId)) return null;
@@ -451,10 +516,22 @@ export function UserVolume({ userId }: { userId: string }) {
       </button>
       {streaming && (
         <>
-          <div className="text-[13px] font-semibold text-fg-2">{t("voice.streamVolume")}</div>
+          <div className="flex items-center justify-between gap-2 text-[13px] font-semibold text-fg-2">
+            {t("voice.streamVolume")}
+            <button
+              onClick={() => toggleStreamSound(userId)}
+              aria-pressed={streamMuted}
+              className={clsx("flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[12px]", streamMuted ? "bg-bad/15 text-bad" : "text-fg-3 hover:bg-raised hover:text-fg")}
+            >
+              {streamMuted ? <VolumeX size={13} /> : <Volume2 size={13} />}
+              {streamMuted ? t("voice.streamUnmute") : t("voice.streamMute")}
+            </button>
+          </div>
           <Slider value={svol} min={0} max={200} onChange={(v) => settings().setLocal({ streamVolumes: { ...settings().streamVolumes, [userId]: v } })} format={(v) => `${v}%`} />
         </>
       )}
+      <div className="text-[13px] font-semibold text-fg-2">{t("voice.soundboardVolume")}</div>
+      <Slider value={bvol} min={0} max={200} onChange={(v) => settings().setLocal({ soundboardVolumes: { ...settings().soundboardVolumes, [userId]: v } })} format={(v) => `${v}%`} />
     </div>
   );
 }

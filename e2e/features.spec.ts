@@ -87,6 +87,10 @@ test("camera and screen share reach the other side", async ({ browser, request }
   await a.page.getByRole("button", { name: "Показать экран" }).first().click();
   const stream = b.page.locator(`[data-user="${alice.id}"][data-source="screen"]`);
   await expect(stream).toBeVisible({ timeout: 20_000 });
+  // Not opened by itself: nothing is downloaded until Bob chooses to watch.
+  await expect(stream.locator("[data-stream-offer]")).toContainText("показывает экран");
+  await expect(stream.locator("video")).toHaveCount(0);
+  await stream.getByRole("button", { name: "Смотреть трансляцию" }).click();
   await expect(stream.locator("video")).toBeVisible({ timeout: 20_000 });
   await stream.hover();
   await expect(stream.getByRole("button", { name: "Во весь экран" })).toBeVisible();
@@ -154,6 +158,7 @@ test("windows app: screen-share audio comes from the helper (without Nova's own 
     }, 20);
   });
   await a.page.getByRole("button", { name: "Показать экран" }).first().click();
+  await b.page.locator(`[data-user="${alice.id}"][data-source="screen"]`).getByRole("button", { name: "Смотреть трансляцию" }).click();
   await expect(b.page.locator(`[data-user="${alice.id}"][data-source="screen"] video`)).toBeVisible({ timeout: 20_000 });
 
   const level = () =>
@@ -184,5 +189,64 @@ test("windows app: screen-share audio comes from the helper (without Nova's own 
   await a.page.getByRole("button", { name: "Остановить показ" }).first().click();
   await expect.poll(() => a.page.evaluate(() => (window as unknown as { __appAudioStops?: number }).__appAudioStops ?? 0)).toBeGreaterThan(0);
   await expect.poll(async () => (await level()).name, { timeout: 15_000 }).toBeNull();
+  noErrors(a, b);
+});
+
+test("streams open only on request and each one's sound can be muted; soundboard sounds have a volume on the listener's side", async ({ browser, request }) => {
+  test.skip(!!process.env.E2E_URL, "imports modules through the dev server");
+  const alice = await register(request, "Алиса");
+  const bob = await register(request, "Боб");
+  const { guild, voice } = await guildWith(request, alice, [bob]);
+  const a = await openAs(browser, alice, `/#/channels/${guild.id}/${voice.id}`);
+  const b = await openAs(browser, bob, `/#/channels/${guild.id}/${voice.id}`);
+  await a.page.getByRole("button", { name: "Зайти в канал" }).click();
+  await b.page.getByRole("button", { name: "Зайти в канал" }).click();
+  await expect(b.page.locator(`[data-user="${alice.id}"]`).first()).toBeVisible();
+
+  /** What Bob's app has subscribed to from Alice, and how loud it plays. */
+  const fromAlice = () =>
+    b.page.evaluate(async (aliceId) => {
+      const url = performance.getEntriesByType("resource").map((e) => e.name).find((n) => n.includes("/src/features/voice/voice.ts")) ?? "/src/features/voice/voice.ts";
+      const m = (await import(/* @vite-ignore */ url)) as { getRoom: () => import("livekit-client").Room | null };
+      const p = m.getRoom()?.remoteParticipants.get(aliceId);
+      const out: Record<string, { subscribed: boolean; volume: number | null }> = {};
+      p?.trackPublications.forEach((pub) => {
+        const key = pub.trackName === "soundboard" ? "soundboard" : pub.source;
+        const track = pub.track as { getVolume?: () => number } | undefined;
+        out[key] = { subscribed: pub.isSubscribed, volume: track?.getVolume?.() ?? null };
+      });
+      return out;
+    }, alice.id);
+
+  // A stream is offered, not downloaded.
+  await a.page.getByRole("button", { name: "Показать экран" }).first().click();
+  const stream = b.page.locator(`[data-user="${alice.id}"][data-source="screen"]`);
+  await expect(stream.getByRole("button", { name: "Смотреть трансляцию" })).toBeVisible({ timeout: 20_000 });
+  await expect.poll(async () => (await fromAlice()).screen_share?.subscribed).toBe(false);
+  await stream.getByRole("button", { name: "Смотреть трансляцию" }).click();
+  await expect(stream.locator("video")).toBeVisible({ timeout: 20_000 });
+  await expect.poll(async () => (await fromAlice()).screen_share?.subscribed).toBe(true);
+
+  // Its sound has its own switch, per person.
+  await stream.hover();
+  await stream.getByRole("button", { name: "Выключить звук трансляции" }).click();
+  await expect(stream.getByRole("button", { name: "Включить звук трансляции" })).toHaveAttribute("aria-pressed", "true");
+  await expect.poll(async () => (await fromAlice()).screen_share_audio?.volume).toBe(0);
+  await stream.getByRole("button", { name: "Включить звук трансляции" }).click();
+  await expect.poll(async () => (await fromAlice()).screen_share_audio?.volume).toBe(1);
+
+  // Stop watching: back to the offer.
+  await stream.getByRole("button", { name: "Не смотреть" }).click();
+  await expect(stream.getByRole("button", { name: "Смотреть трансляцию" })).toBeVisible();
+  await expect.poll(async () => (await fromAlice()).screen_share?.subscribed).toBe(false);
+
+  // Alice's soundboard sound arrives as a track of its own; Bob sets how loud it is for him.
+  await a.page.getByRole("button", { name: "Саундпад" }).last().click();
+  await a.page.locator('[data-clip="siren"]').click();
+  await expect.poll(async () => (await fromAlice()).soundboard?.subscribed, { timeout: 15_000 }).toBe(true);
+  await b.page.getByRole("button", { name: "Саундпад" }).last().click();
+  const others = b.page.locator("[data-soundboard]").locator('input[type="range"]').nth(1);
+  await others.fill("40");
+  await expect.poll(async () => (await fromAlice()).soundboard?.volume).toBeCloseTo(0.4, 2);
   noErrors(a, b);
 });

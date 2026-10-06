@@ -1,8 +1,8 @@
 // Per-frame audio levels for the speaking aura. Written straight into a CSS
 // variable on the element (no React state), so dozens of tiles cost nothing.
 import { useEffect, type RefObject } from "react";
-import { Track, createAudioAnalyser, type RemoteAudioTrack } from "livekit-client";
-import { getRoom, micLevel, useVoice } from "./voice";
+import { createAudioAnalyser, type RemoteAudioTrack } from "livekit-client";
+import { getRoom, micLevel, useVoice, voicePublication } from "./voice";
 import { useSettings } from "../../store/settings";
 
 const analysers = new Map<string, { calc: () => number; cleanup: () => Promise<void> | void }>();
@@ -10,7 +10,7 @@ const analysers = new Map<string, { calc: () => number; cleanup: () => Promise<v
 function remoteLevel(userId: string): number {
   const room = getRoom();
   const p = room?.remoteParticipants.get(userId);
-  const pub = p?.getTrackPublication(Track.Source.Microphone);
+  const pub = p ? voicePublication(p) : undefined;
   const track = pub?.track as RemoteAudioTrack | undefined;
   if (!track || pub?.isMuted) return 0;
   const key = track.sid ?? userId;

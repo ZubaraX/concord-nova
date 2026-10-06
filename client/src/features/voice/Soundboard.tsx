@@ -4,7 +4,7 @@
 // you're talking in.
 import { useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
-import { ImagePlus, Megaphone, Pencil, Play, Plus, Square, Trash2, Upload, Volume2 } from "lucide-react";
+import { ImagePlus, Megaphone, Pencil, Play, Plus, Square, Trash2, Upload } from "lucide-react";
 import { MAX_GUILD_SOUNDS, MAX_OWN_SOUNDS, type SoundDTO } from "@nova/shared";
 import { errorText, t } from "../../lib/i18n";
 import { toast } from "../../lib/bus";
@@ -12,6 +12,7 @@ import { decodeAudio, playBuffer } from "../../lib/sound";
 import { mediaUrl } from "../../lib/server";
 import { useData } from "../../store/data";
 import { useUI } from "../../store/ui";
+import { settings, useSettings } from "../../store/settings";
 import { Button, Field, Input, Slider } from "../../components/ui/primitives";
 import { Modal, ModalFooter, ModalHeader, Popover, Tooltip, usePopover } from "../../components/ui/overlay";
 import { EmojiPicker } from "../chat/EmojiPicker";
@@ -92,6 +93,7 @@ function Section({ title, children, testId }: { title: string; children: React.R
  */
 export function SoundboardPanel({ onClose, embedded }: { onClose?: () => void; embedded?: boolean }) {
   const volume = useSoundboard((s) => s.volume);
+  const othersVolume = useSettings((s) => s.soundboardVolume ?? 100);
   const sounding = useSoundboard((s) => Object.keys(s.playing).length > 0);
   const inCall = useVoice((s) => s.state === "connected");
   const callChannel = useVoice((s) => s.channelId);
@@ -110,9 +112,9 @@ export function SoundboardPanel({ onClose, embedded }: { onClose?: () => void; e
   };
   return (
     <div className={clsx(!embedded && "menu-surface w-[min(372px,calc(100vw-16px))] rounded-2xl p-3 shadow-lift")} data-soundboard>
-      <div className="mb-1 flex items-center gap-2.5">
-        {!embedded && <h3 className="shrink-0 font-display text-[15px] font-semibold">{t("soundboard.title")}</h3>}
-        <Volume2 size={15} className="shrink-0 text-fg-3" />
+      {!embedded && <h3 className="mb-1.5 font-display text-[15px] font-semibold">{t("soundboard.title")}</h3>}
+      <div className="flex items-center gap-2.5" title={t("soundboard.myVolumeHint")}>
+        <span className="w-[92px] shrink-0 text-[12px] font-semibold text-fg-3">{t("soundboard.myVolume")}</span>
         <Slider value={volume} onChange={setSoundboardVolume} format={(v) => `${v}%`} className="min-w-0 flex-1" />
         <button
           type="button"
@@ -124,6 +126,10 @@ export function SoundboardPanel({ onClose, embedded }: { onClose?: () => void; e
         >
           <Square size={12} fill="currentColor" />
         </button>
+      </div>
+      <div className="mb-1 flex items-center gap-2.5 pr-[38px]" title={t("soundboard.othersVolumeHint")}>
+        <span className="w-[92px] shrink-0 text-[12px] font-semibold text-fg-3">{t("soundboard.othersVolume")}</span>
+        <Slider value={othersVolume} onChange={(v) => settings().setLocal({ soundboardVolume: v })} format={(v) => `${v}%`} className="min-w-0 flex-1" />
       </div>
       <div className={clsx(!embedded && "scroll-thin max-h-[min(400px,58vh)] overflow-y-auto pr-0.5")}>
         <Section title={t("soundboard.builtin")} testId="builtin">

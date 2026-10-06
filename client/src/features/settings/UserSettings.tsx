@@ -739,6 +739,9 @@ function Voice() {
         <SettingRow title={t("settings.joinMuted")}>
           <Switch checked={s.joinMuted} onChange={(v) => s.setLocal({ joinMuted: v })} />
         </SettingRow>
+        <SettingRow title={t("settings.autoWatchStreams")} hint={t("settings.autoWatchStreamsHint")}>
+          <Switch checked={s.autoWatchStreams} onChange={(v) => s.setLocal({ autoWatchStreams: v })} />
+        </SettingRow>
         <SettingRow title={t("settings.autoLeave")} hint={t("settings.autoLeaveHint")}>
           <Segmented<typeof s.autoLeave>
             value={s.autoLeave}

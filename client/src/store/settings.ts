@@ -59,6 +59,13 @@ export interface LocalSettings {
   joinMuted: boolean;
   userVolumes: Record<string, number>;
   streamVolumes: Record<string, number>;
+  /** Streams whose sound you switched off (the picture keeps playing). */
+  streamMutes: Record<string, boolean>;
+  /** How loud other people's soundboard sounds play for you: per person, and for everyone (0–100). */
+  soundboardVolumes: Record<string, number>;
+  soundboardVolume: number;
+  /** Open somebody's screen share as soon as it starts (otherwise: a "Watch" button). */
+  autoWatchStreams: boolean;
   localMutes: Record<string, boolean>;
   desktopNotifications: boolean;
   flashTaskbar: boolean;
@@ -137,6 +144,10 @@ const LOCAL_DEFAULTS: LocalSettings = {
   joinMuted: false,
   userVolumes: {},
   streamVolumes: {},
+  streamMutes: {},
+  soundboardVolumes: {},
+  soundboardVolume: 100,
+  autoWatchStreams: false,
   localMutes: {},
   desktopNotifications: true,
   flashTaskbar: true,

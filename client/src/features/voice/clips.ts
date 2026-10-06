@@ -455,7 +455,7 @@ export async function playClip(id: string, localOnly = false) {
     stops.delete(stop);
     bumpPlaying(id, -1);
   };
-  const toCall = inCall ? playIntoCall(buffer, gain) : null;
+  const toCall = inCall ? await playIntoCall(buffer, gain) : null;
   const local = playBuffer(buffer, gain * (toCall ? MONITOR : 1), finish);
   const stop = () => {
     toCall?.();
