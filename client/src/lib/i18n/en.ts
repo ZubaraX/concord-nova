@@ -1115,6 +1115,12 @@ export const en: Dict = {
     mailTest: "Test letter",
     mailTestSent: "Sent to {to} — check the inbox (and spam).",
     mailTestFailed: "Not sent: {why}",
+    mailRefused: {
+      gmail: "Google refused the address and password. It needs an app password (16 letters) of this very account: turn on 2-Step Verification, create a new one at myaccount.google.com/apppasswords, paste it and press Save. The Gmail password itself won't work.",
+      yandex: "Yandex refused the address and password. It needs an app password for mail (id.yandex.ru → Security → App passwords) and IMAP/SMTP access turned on in the mail settings.",
+      mailru: "Mail.ru refused the address and password. It needs a password for external apps with SMTP access (account.mail.ru → Security).",
+      other: "The mail server refused the login and password — check them, the server address and the port.",
+    },
     gifSearch: "GIF search",
     gifOn: "On",
     gifOff: "Off",

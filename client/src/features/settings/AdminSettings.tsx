@@ -147,12 +147,14 @@ function MailSettings({ data, onChange }: { data: AdminOverviewDTO; onChange: (d
   const preset = MAIL_PROVIDERS.find((p) => p.id === provider)!;
   const realHost = provider === "other" ? host.trim() : preset.host;
   const realPort = provider === "other" ? Number(port) || 465 : preset.port;
+  // Gmail, Yandex and Mail.ru show app passwords in groups ("abcd efgh ijkl mnop"); the spaces aren't part of it.
+  const cleanPass = provider === "other" ? pass : pass.replace(/\s+/g, "");
   const canSave = !!realHost && !!user.trim() && (!!pass || !!saved?.hasPassword);
 
   const save = async () => {
     setBusy("save");
     try {
-      const r = await api<{ mail: AdminOverviewDTO["mail"] }>("/api/admin/mail", { method: "PUT", body: { host: realHost, port: realPort, user: user.trim(), ...(pass ? { pass } : {}) } });
+      const r = await api<{ mail: AdminOverviewDTO["mail"] }>("/api/admin/mail", { method: "PUT", body: { host: realHost, port: realPort, user: user.trim(), ...(pass ? { pass: cleanPass } : {}) } });
       onChange({ ...data, mail: r.mail });
       setPass("");
       useData.setState((s) => (s.server ? { server: { ...s.server, mail: true } } : {}));
@@ -170,7 +172,9 @@ function MailSettings({ data, onChange }: { data: AdminOverviewDTO; onChange: (d
       toast(t("admin.mailTestSent", { to: r.to }), "success");
     } catch (e) {
       const err = e as { code?: string; message?: string };
-      toast(err.code === "mail_failed" ? t("admin.mailTestFailed", { why: err.message ?? "" }) : errorText(e), "error");
+      // 535 and friends: the mail service refused the login — say what that usually means for this provider.
+      const refused = err.code === "mail_failed" && /\b535\b|Invalid login|authentication failed/i.test(err.message ?? "");
+      toast(err.code === "mail_failed" ? (refused ? t(`admin.mailRefused.${provider}`) : t("admin.mailTestFailed", { why: err.message ?? "" })) : errorText(e), "error");
     } finally {
       setBusy(null);
     }
