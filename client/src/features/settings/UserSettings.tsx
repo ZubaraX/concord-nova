@@ -563,6 +563,9 @@ function useDevices() {
   return devices;
 }
 
+/** Virtual microphones of voice changers and audio routers (VB-Cable, Voicemeeter, Voicemod, RVC clients…). */
+const VIRTUAL_MIC_RE = /cable|vb-audio|voicemeeter|voicemod|virtual|w-okada|\brvc\b|clownfish|morphvox|voice ?changer/i;
+
 function DeviceSelect({ kind, value, onChange }: { kind: MediaDeviceKind; value: string | null; onChange: (v: string | null) => void }) {
   const devices = useDevices().filter((d) => d.kind === kind);
   return (
@@ -586,6 +589,11 @@ function Voice() {
   const stopRef = useRef<(() => void) | null>(null);
   const releaseCall = useRef<(() => void) | null>(null);
   const inCall = useVoice((v) => v.state === "connected");
+  // A virtual microphone fed by an external (AI) voice changer: our own
+  // processing would only mangle its output — offer to pass it through as is.
+  const inputLabel = useDevices().find((d) => d.kind === "audioinput" && d.deviceId === s.inputDevice)?.label ?? "";
+  const virtualMic = VIRTUAL_MIC_RE.test(inputLabel);
+  const passThrough = s.noise === "off" && !s.echoCancellation && !s.autoGain && s.voiceEffect === "none";
   const [cam, setCam] = useState<MediaStream | null>(null);
   const video = useRef<HTMLVideoElement>(null);
 
@@ -637,6 +645,20 @@ function Voice() {
       <div className="mb-6 grid gap-4 sm:grid-cols-2">
         <Field label={t("settings.inputDevice")}>
           <DeviceSelect kind="audioinput" value={s.inputDevice} onChange={(v) => s.setLocal({ inputDevice: v })} />
+          {virtualMic && (
+            <div className="mt-1.5 rounded-lg bg-star/10 px-3 py-2 text-[12.5px] leading-snug text-fg-2" data-virtual-mic>
+              {passThrough ? (
+                t("settings.virtualMicRaw")
+              ) : (
+                <>
+                  {t("settings.virtualMicHint")}{" "}
+                  <button type="button" onClick={() => s.setLocal({ noise: "off", echoCancellation: false, autoGain: false, voiceEffect: "none" })} className="font-semibold text-star hover:underline">
+                    {t("settings.virtualMicApply")}
+                  </button>
+                </>
+              )}
+            </div>
+          )}
         </Field>
         <Field label={t("settings.outputDevice")}>
           <DeviceSelect
