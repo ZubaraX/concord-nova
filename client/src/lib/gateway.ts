@@ -12,6 +12,7 @@ import { applyDispatch } from "../store/data";
 import * as msgs from "../store/messages";
 import { settings } from "../store/settings";
 import { loadFavorites, onGifsEvent } from "./gifs";
+import { loadExpressions, onExpressionEvent } from "../features/voice/expressions";
 
 export type ConnState = "connecting" | "ready" | "reconnecting" | "offline";
 
@@ -39,6 +40,7 @@ function handle(e: DispatchEvent) {
       if (!first) void msgs.resyncAll();
       if (focusChannel) socket?.emit("focus", focusChannel);
       void loadFavorites();
+      void loadExpressions();
       bus.emit("ready", { first });
       break;
     }
@@ -71,6 +73,12 @@ function handle(e: DispatchEvent) {
       break;
     case "USER_GIFS_UPDATE":
       onGifsEvent(e.d);
+      break;
+    case "SOUND_UPSERT":
+    case "SOUND_DELETE":
+    case "VOICE_PRESET_UPSERT":
+    case "VOICE_PRESET_DELETE":
+      onExpressionEvent(e);
       break;
     case "SESSION_INVALIDATE":
       tokens.clear();

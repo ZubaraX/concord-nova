@@ -124,3 +124,65 @@ test("profile edits show up for others", async ({ browser, request }) => {
   await expect(b.page.getByText(`Алиса Новая ${run}`).first()).toBeVisible();
   noErrors(a, b);
 });
+
+test("windows app: screen-share audio comes from the helper (without Nova's own sound) and stops with the share", async ({ browser, request }) => {
+  test.skip(!!process.env.E2E_URL, "imports modules through the dev server");
+  const alice = await register(request, "Алиса");
+  const bob = await register(request, "Боб");
+  const { guild, voice } = await guildWith(request, alice, [bob]);
+  const a = await openAs(browser, alice, `/#/channels/${guild.id}/${voice.id}`, { desktop: true });
+  const b = await openAs(browser, bob, `/#/channels/${guild.id}/${voice.id}`);
+  await a.page.getByRole("button", { name: "Зайти в канал" }).click();
+  await b.page.getByRole("button", { name: "Зайти в канал" }).click();
+  await expect(b.page.locator(`[data-user="${alice.id}"]`).first()).toBeVisible();
+
+  // What the desktop shell does once the helper is ready: "start", then a stream of 48 kHz stereo PCM (a 440 Hz tone here).
+  await a.page.evaluate(() => {
+    const send = (window as unknown as { __appAudio: (k: string, pcm?: Uint8Array) => void }).__appAudio;
+    send("start");
+    let phase = 0;
+    setInterval(() => {
+      const frames = 960;
+      const pcm = new Int16Array(frames * 2);
+      for (let i = 0; i < frames; i++) {
+        const v = Math.round(Math.sin(phase) * 9000);
+        pcm[2 * i] = v;
+        pcm[2 * i + 1] = v;
+        phase += (2 * Math.PI * 440) / 48000;
+      }
+      send("pcm", new Uint8Array(pcm.buffer));
+    }, 20);
+  });
+  await a.page.getByRole("button", { name: "Показать экран" }).first().click();
+  await expect(b.page.locator(`[data-user="${alice.id}"][data-source="screen"] video`)).toBeVisible({ timeout: 20_000 });
+
+  const level = () =>
+    b.page.evaluate(async (aliceId) => {
+      // The very module instance the app runs (Vite may have added ?t= to its URL).
+      const url = performance.getEntriesByType("resource").map((e) => e.name).find((n) => n.includes("/src/features/voice/voice.ts")) ?? "/src/features/voice/voice.ts";
+      const m = (await import(/* @vite-ignore */ url)) as { getRoom: () => import("livekit-client").Room | null };
+      const pub = m.getRoom()?.remoteParticipants.get(aliceId)?.getTrackPublication("screen_share_audio" as never);
+      const track = pub?.track?.mediaStreamTrack;
+      if (!track) return { name: pub?.trackName ?? null, db: -200 };
+      const ctx = new AudioContext();
+      const an = ctx.createAnalyser();
+      ctx.createMediaStreamSource(new MediaStream([track])).connect(an);
+      const buf = new Float32Array(an.fftSize);
+      let peak = 0;
+      for (let i = 0; i < 15; i++) {
+        await new Promise((r) => setTimeout(r, 100));
+        an.getFloatTimeDomainData(buf);
+        for (const v of buf) peak = Math.max(peak, Math.abs(v));
+      }
+      await ctx.close();
+      return { name: pub?.trackName ?? null, db: Math.round(20 * Math.log10(peak + 1e-9)) };
+    }, alice.id);
+  await expect.poll(async () => (await level()).name, { timeout: 15_000 }).toBe("screen-audio-app");
+  await expect.poll(async () => (await level()).db, { timeout: 15_000 }).toBeGreaterThan(-30);
+
+  // Stopping the share stops the helper and takes the audio away.
+  await a.page.getByRole("button", { name: "Остановить показ" }).first().click();
+  await expect.poll(() => a.page.evaluate(() => (window as unknown as { __appAudioStops?: number }).__appAudioStops ?? 0)).toBeGreaterThan(0);
+  await expect.poll(async () => (await level()).name, { timeout: 15_000 }).toBeNull();
+  noErrors(a, b);
+});

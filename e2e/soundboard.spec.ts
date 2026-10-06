@@ -1,6 +1,6 @@
 import sharp from "sharp";
 import { expect, test, type Page } from "@playwright/test";
-import { guildWith, noErrors, openAs, register } from "./helpers";
+import { BASE, guildWith, noErrors, openAs, register } from "./helpers";
 
 /** A plain tone as a 16-bit mono WAV file. */
 function wav(seconds: number, freq = 440, rate = 22_050): Buffer {
@@ -27,7 +27,7 @@ async function choose(page: Page, click: () => Promise<void>, file: { name: stri
   await chooser.setFiles(file);
 }
 
-test("soundboard: a sound reaches the call with the mic muted; an own sound with its own icon", async ({ browser, request }) => {
+test("soundboard: a sound reaches the call with the mic muted; own sounds follow the account, server sounds are shared", async ({ browser, request }) => {
   const alice = await register(request, "Алиса");
   const bob = await register(request, "Боб");
   const { guild, voice } = await guildWith(request, alice, [bob]);
@@ -47,7 +47,7 @@ test("soundboard: a sound reaches the call with the mic muted; an own sound with
 
   // A built-in sound goes out through her muted microphone track.
   await openBoard();
-  await expect(board.locator("[data-clip]")).toHaveCount(12);
+  await expect(board.locator('[data-section="builtin"] [data-clip]')).toHaveCount(12);
   await board.locator('[data-clip="siren"]').click();
   await expect(board.locator('[data-clip="siren"]')).toHaveAttribute("data-playing", "true");
   await expect(aliceSpeaks).toBeVisible();
@@ -55,17 +55,18 @@ test("soundboard: a sound reaches the call with the mic muted; an own sound with
   await expect(board.locator('[data-clip="siren"]')).toHaveAttribute("data-playing", "false");
   await expect(aliceSpeaks).toHaveCount(0);
 
-  // Her own sound: a file, a name taken from it, an emoji.
-  await board.getByRole("button", { name: "Добавить" }).click();
+  // Her own sound: a file, a name taken from it, an emoji — kept on her account.
+  await board.locator('[data-section="mine"]').getByRole("button", { name: "Добавить" }).click();
   const dialog = p.getByRole("dialog").last();
   await choose(p, () => dialog.getByRole("button", { name: "Выбрать файл" }).click(), { name: "гудок.wav", mimeType: "audio/wav", buffer: wav(2) });
   await expect(dialog.getByPlaceholder(/Бадумтс/)).toHaveValue("гудок");
+  await expect(dialog.getByLabel("Где сохранить")).toHaveValue("");
   await dialog.getByRole("button", { name: "🚀" }).click();
   await dialog.getByRole("button", { name: "Добавить", exact: true }).click();
   await expect(dialog).toHaveCount(0);
 
   await openBoard();
-  const mine = board.locator("[data-clip]").filter({ hasText: "гудок" });
+  const mine = board.locator('[data-section="mine"] [data-clip]').filter({ hasText: "гудок" });
   await expect(mine).toContainText("🚀");
   await mine.click();
   await expect(aliceSpeaks).toBeVisible();
@@ -80,23 +81,69 @@ test("soundboard: a sound reaches the call with the mic muted; an own sound with
   await dialog.getByRole("button", { name: "Сохранить" }).click();
   await expect(dialog).toHaveCount(0);
 
-  // It is kept on the device: after a reload it is in voice settings, picture and all.
-  await p.reload();
-  await expect(p.locator("[data-shell]")).toBeVisible();
-  await p.getByRole("button", { name: "Настройки" }).last().click();
-  await p.locator("[data-settings] nav").getByRole("button", { name: "Голос и видео", exact: true }).click();
-  const kept = p.locator("[data-soundboard] [data-clip]").filter({ hasText: "гудок" });
+  // A sound for the server: Bob gets it at once and can play it — muted, he is heard only through it.
+  await openBoard();
+  await board.locator(`[data-section="guild:${guild.id}"]`).getByRole("button", { name: "Добавить" }).click();
+  await choose(p, () => dialog.getByRole("button", { name: "Выбрать файл" }).click(), { name: "горн-сервера.wav", mimeType: "audio/wav", buffer: wav(2, 330) });
+  await expect(dialog.getByLabel("Где сохранить")).toHaveValue(guild.id);
+  await dialog.getByRole("button", { name: "Добавить", exact: true }).click();
+  await expect(dialog).toHaveCount(0);
+  const bobSpeaks = p.locator(`[data-user="${bob.id}"] [data-speaking="true"]`);
+  await b.page.getByRole("button", { name: "Выключить микрофон" }).last().click();
+  await expect(bobSpeaks).toHaveCount(0);
+  await b.page.getByRole("button", { name: "Саундпад" }).last().click();
+  const shared = b.page.locator(`[data-soundboard] [data-section="guild:${guild.id}"] [data-clip]`).filter({ hasText: "горн-сервера" });
+  await expect(shared).toBeVisible();
+  await expect(b.page.getByRole("button", { name: "Изменить: горн-сервера" })).toHaveCount(0); // not his to change
+  await shared.click();
+  await expect(bobSpeaks).toBeVisible();
+
+  // Her own sound is on her other devices too, picture and all.
+  const other = await openAs(browser, alice, "/");
+  await other.page.getByRole("button", { name: "Настройки" }).last().click();
+  await other.page.locator("[data-settings] nav").getByRole("button", { name: "Голос и видео", exact: true }).click();
+  const kept = other.page.locator('[data-soundboard] [data-section="mine"] [data-clip]').filter({ hasText: "гудок" });
   await expect(kept.locator("img")).toBeVisible();
   await kept.click(); // outside a call it just plays locally
   await expect(kept).toHaveAttribute("data-playing", "true");
 
-  // …until it is deleted.
+  // …until it is deleted — everywhere.
   await kept.hover();
-  await p.getByRole("button", { name: "Изменить: гудок" }).click();
-  await p.getByRole("dialog").last().getByRole("button", { name: "Удалить" }).click();
-  await expect(p.locator("[data-soundboard] [data-clip]").filter({ hasText: "гудок" })).toHaveCount(0);
-  await expect(p.locator("[data-soundboard] [data-clip]")).toHaveCount(12);
-  noErrors(a, b);
+  await other.page.getByRole("button", { name: "Изменить: гудок" }).click();
+  await other.page.getByRole("dialog").last().getByRole("button", { name: "Удалить" }).click();
+  await expect(kept).toHaveCount(0);
+  await openBoard();
+  await expect(board.locator('[data-section="mine"] [data-clip]')).toHaveCount(0);
+  noErrors(a, b, other);
+  await other.context.close();
+});
+
+test("soundboard: sounds kept on the device by 1.3 move to the account", async ({ browser, request }) => {
+  const alice = await register(request, "Алиса");
+  const a = await openAs(browser, alice);
+  const wavBytes = [...wav(1)];
+  await a.page.evaluate(async (bytes) => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const req = indexedDB.open("nova-assets", 1);
+      req.onupgradeneeded = () => req.result.createObjectStore("files");
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction("files", "readwrite");
+      tx.objectStore("files").put(new Blob([new Uint8Array(bytes)], { type: "audio/wav" }), "sound:old-1");
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+    db.close();
+    localStorage.setItem("nova.soundboard", JSON.stringify([{ id: "old-1", name: "старый звук", emoji: "🐸", image: false }]));
+  }, wavBytes);
+  await a.page.reload();
+  await expect(a.page.getByText(/Ваши звуки перенесены в аккаунт/)).toBeVisible();
+  await expect.poll(() => a.page.evaluate(() => localStorage.getItem("nova.soundboard"))).toBeNull();
+  const list = await (await request.get(`${BASE}/api/expressions`, { headers: { authorization: `Bearer ${alice.access}` } })).json();
+  expect(list.sounds.map((s: { name: string; emoji: string }) => `${s.emoji} ${s.name}`)).toEqual(["🐸 старый звук"]);
+  noErrors(a);
 });
 
 test("soundboard: every built-in sound renders audibly and without clipping", async ({ browser, request }) => {

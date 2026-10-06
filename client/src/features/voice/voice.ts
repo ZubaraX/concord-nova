@@ -4,6 +4,7 @@
 // share presets, sounds, and self-healing rejoin after hard disconnects.
 import { create } from "zustand";
 import {
+  AudioPresets,
   ConnectionQuality,
   ConnectionState,
   DisconnectReason,
@@ -30,6 +31,8 @@ import { playSound } from "../../lib/sound";
 import { data } from "../../store/data";
 import { settings, useSettings } from "../../store/settings";
 import { MicProcessor } from "./processor";
+import { appAudioTrack, stopAppAudio } from "./appAudio";
+import { useExpressions } from "./expressions";
 
 export type Quality = "excellent" | "good" | "poor" | "lost" | "unknown";
 
@@ -54,6 +57,8 @@ export interface VoiceStore {
   denoiser: "deep" | "rnnoise" | "none";
   /** Since when there is nobody else in the call — the countdown to hanging up (null: not counting). */
   aloneSince: number | null;
+  /** The microphone check in settings is running: the call doesn't get the microphone meanwhile. */
+  micTest: boolean;
 }
 
 export const useVoice = create<VoiceStore>(() => ({
@@ -74,6 +79,7 @@ export const useVoice = create<VoiceStore>(() => ({
   reactions: [],
   denoiser: "none",
   aloneSince: null,
+  micTest: false,
 }));
 
 const V = () => useVoice.getState();
@@ -129,6 +135,15 @@ useSettings.subscribe((s, prev) => {
   if ((s.noise !== prev.noise || s.echoCancellation !== prev.echoCancellation || s.autoGain !== prev.autoGain || s.inputDevice !== prev.inputDevice) && room) void restartMic();
 });
 
+// Someone edited the preset you're using (or it was deleted): rebuild it.
+useExpressions.subscribe((s, prev) => {
+  if (s.presets === prev.presets) return;
+  const effect = settings().voiceEffect;
+  if (!effect.startsWith("custom:")) return;
+  const id = effect.slice("custom:".length);
+  if (s.presets.find((p) => p.id === id) !== prev.presets.find((p) => p.id === id)) mic?.setEffect(effect);
+});
+
 // ── mic ──────────────────────────────────────────────────────────────────────
 function micCapture() {
   const s = settings();
@@ -145,7 +160,7 @@ function micCapture() {
 async function publishMic() {
   if (!room) return;
   mic = new MicProcessor(
-    () => ({ muted: V().muted || V().deafened, pttDown: V().pttDown }),
+    () => ({ muted: V().muted || V().deafened || V().micTest, pttDown: V().pttDown }),
     () => setV({ talkingWhileMuted: mic?.talkingWhileMuted ?? false })
   );
   try {
@@ -169,6 +184,20 @@ async function restartMic() {
   await mic?.destroy().catch(() => {});
   mic = null;
   await publishMic();
+}
+
+/**
+ * The microphone check in settings plays your voice back to you — the people
+ * in the call must not hear that test. Returns the release function.
+ */
+export function holdMicForTest(): () => void {
+  setV({ micTest: true });
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    setV({ micTest: false });
+  };
 }
 
 export function micLevel(): number {
@@ -273,6 +302,7 @@ function wire(r: Room) {
     .on(RoomEvent.TrackUnmuted, bump)
     .on(RoomEvent.LocalTrackPublished, bump)
     .on(RoomEvent.LocalTrackUnpublished, (pub) => {
+      if (pub.source === Track.Source.ScreenShare) void dropAppAudio();
       if (pub.source === Track.Source.ScreenShare && V().screenOn) {
         setV({ screenOn: false });
         playSound("streamStop");
@@ -485,9 +515,18 @@ const SCREEN_PRESETS = {
   source: { w: 0, h: 0, fps: 60, bitrate: 16_000_000 },
 } as const;
 
+/** The share's audio from the Windows helper goes with the share. */
+async function dropAppAudio() {
+  stopAppAudio();
+  const pub = room?.localParticipant.getTrackPublication(Track.Source.ScreenShareAudio);
+  if (pub?.track && pub.trackName === APP_AUDIO_NAME) await room?.localParticipant.unpublishTrack(pub.track, true).catch(() => {});
+}
+const APP_AUDIO_NAME = "screen-audio-app";
+
 export async function toggleScreen(opts?: { audio?: boolean }) {
   if (!room) return;
   if (V().screenOn) {
+    await dropAppAudio();
     await room.localParticipant.setScreenShareEnabled(false).catch(() => {});
     if (isAndroid) void import("../../lib/android").then((m) => m.stopScreenCapture());
     setV({ screenOn: false });
@@ -519,6 +558,17 @@ export async function toggleScreen(opts?: { audio?: boolean }) {
         resolution: preset.w ? { width: preset.w, height: preset.h, frameRate: preset.fps } : { width: 3840, height: 2160, frameRate: preset.fps },
       };
       await room.localParticipant.setScreenShareEnabled(true, capture, publish);
+      // Windows app: the picked screen's or window's audio, captured without
+      // Nova itself, arrives from the helper instead of system loopback.
+      const extra = appAudioTrack();
+      if (extra) {
+        // It wins over any loopback audio the capture brought along.
+        const other = room.localParticipant.getTrackPublication(Track.Source.ScreenShareAudio);
+        if (other?.track && other.trackName !== APP_AUDIO_NAME) await room.localParticipant.unpublishTrack(other.track, true).catch(() => {});
+        await room.localParticipant
+          .publishTrack(extra, { source: Track.Source.ScreenShareAudio, name: APP_AUDIO_NAME, dtx: false, red: false, forceStereo: true, audioPreset: AudioPresets.musicHighQualityStereo, stopMicTrackOnMute: false })
+          .catch((e) => console.warn("[voice] screen audio failed", e));
+      }
     }
     setV({ screenOn: true });
     playSound("streamStart");

@@ -3,8 +3,23 @@
 // swapped while talking. Each effect is a small graph between `input` and
 // `output`; "none" is a straight wire.
 
+import type { VoiceParams } from "@nova/shared";
+
 export const VOICE_EFFECTS = ["none", "high", "low", "robot", "radio", "echo", "cave", "alien", "demon", "underwater"] as const;
 export type VoiceEffect = (typeof VOICE_EFFECTS)[number];
+/** What the voiceEffect setting holds: a built-in effect, or "custom:<preset id>" (expressions.ts). */
+export type EffectId = VoiceEffect | `custom:${string}`;
+
+export const isBuiltinEffect = (id: string): id is VoiceEffect => (VOICE_EFFECTS as readonly string[]).includes(id);
+
+/** A neutral starting point for a preset of your own. */
+export const DEFAULT_PARAMS: VoiceParams = { pitch: 0, robot: 0, robotHz: 60, drive: 0, lowpass: 20_000, highpass: 20, echo: 0, echoMs: 250, reverb: 0, room: 1.5, tremolo: 0, tremoloHz: 6, trim: 1 };
+
+// Presets live in a store this module mustn't import (voice → processor → effects).
+let lookupPreset: (id: string) => VoiceParams | null = () => null;
+export function setPresetLookup(fn: (id: string) => VoiceParams | null) {
+  lookupPreset = fn;
+}
 
 export interface EffectGraph {
   input: AudioNode;
@@ -167,7 +182,43 @@ function blend(ctx: Ctx, parts: Parts, from: AudioNode, wetChain: AudioNode[], d
 }
 
 // ── the effects ──────────────────────────────────────────────────────────────
-export function buildEffect(ctx: Ctx, effect: VoiceEffect): EffectGraph {
+/**
+ * Output trims, measured: each effect is played a speech-like test signal
+ * (e2e "voice changer: … as loud as the plain voice") and brought to within
+ * a couple of dB of the dry voice. Distortion in "demon" and "radio" used to
+ * make them 10–13 dB louder than everybody else.
+ */
+const TRIM: Record<VoiceEffect, number> = {
+  none: 1,
+  high: 0.93,
+  low: 0.77,
+  robot: 0.52,
+  radio: 0.31,
+  echo: 0.9,
+  cave: 0.85,
+  alien: 1.26,
+  demon: 0.22,
+  underwater: 0.62,
+};
+
+/** A last-resort brake: no effect may come out as a blast. */
+export function limiter(ctx: Ctx, parts?: { add<T extends AudioNode>(n: T): T }): DynamicsCompressorNode {
+  const c = ctx.createDynamicsCompressor();
+  c.threshold.value = -6;
+  c.knee.value = 3;
+  c.ratio.value = 20;
+  c.attack.value = 0.002;
+  c.release.value = 0.12;
+  return parts ? parts.add(c) : c;
+}
+
+export function buildEffect(ctx: Ctx, effect: string, override?: VoiceParams): EffectGraph {
+  if (override || effect.startsWith("custom:")) {
+    const params = override ?? lookupPreset(effect.slice("custom:".length));
+    if (params) return buildCustom(ctx, params);
+    effect = "none"; // a preset that is gone: the plain voice
+  }
+  if (!isBuiltinEffect(effect)) effect = "none";
   const parts = new Parts();
   const input = parts.add(ctx.createGain());
   let out: AudioNode = input;
@@ -250,5 +301,89 @@ export function buildEffect(ctx: Ctx, effect: VoiceEffect): EffectGraph {
     default:
       break;
   }
+  // (0.71: the compressor adds about 3 dB of make-up gain of its own.)
+  if (effect !== "none") out = out.connect(gain(ctx, parts, TRIM[effect as VoiceEffect] ?? 1)).connect(limiter(ctx, parts)).connect(gain(ctx, parts, 0.71));
   return { input, output: out, dispose: () => parts.dispose() };
+}
+
+// ── presets of your own ──────────────────────────────────────────────────────
+/** Builds a voice from parameters: tone → pitch → drive → robot → tremolo → echo → reverb → level. */
+export function buildCustom(ctx: Ctx, p: VoiceParams, trim = p.trim): EffectGraph {
+  const parts = new Parts();
+  const input = parts.add(ctx.createGain());
+  let n: AudioNode = input;
+  if (p.highpass > 25) n = n.connect(filter(ctx, parts, "highpass", p.highpass));
+  if (p.lowpass < 19_000) n = n.connect(filter(ctx, parts, "lowpass", p.lowpass));
+  if (Math.abs(p.pitch) >= 0.1) {
+    const sh = pitch(ctx, parts, Math.min(2, Math.max(0.5, Math.pow(2, p.pitch / 12))));
+    n.connect(sh.input);
+    n = sh.output;
+  }
+  if (p.drive > 0.01) n = n.connect(gain(ctx, parts, 1 + p.drive * 3)).connect(distortion(ctx, parts, p.drive * 40)).connect(gain(ctx, parts, 1 / (1 + p.drive * 4)));
+  if (p.robot > 0.01) {
+    const ring = ringMod(ctx, parts, p.robotHz);
+    n.connect(ring);
+    const mix = gain(ctx, parts, 1);
+    n.connect(gain(ctx, parts, 1 - p.robot)).connect(mix);
+    ring.connect(gain(ctx, parts, p.robot * 1.8)).connect(mix);
+    n = mix;
+  }
+  if (p.tremolo > 0.01) {
+    const g = gain(ctx, parts, 1 - p.tremolo / 2);
+    const lfo = ctx.createOscillator();
+    lfo.frequency.value = p.tremoloHz;
+    lfo.connect(gain(ctx, parts, p.tremolo / 2)).connect(g.gain);
+    parts.start(lfo);
+    n = n.connect(g);
+  }
+  if (p.echo > 0.01) {
+    const delay = parts.add(ctx.createDelay(1));
+    delay.delayTime.value = p.echoMs / 1000;
+    delay.connect(gain(ctx, parts, 0.38)).connect(delay);
+    n = blend(ctx, parts, n, [delay], 1, p.echo * 0.8);
+  }
+  if (p.reverb > 0.01) n = blend(ctx, parts, n, [reverb(ctx, parts, p.room, 0.3)], 1 - p.reverb * 0.4, p.reverb * 1.2);
+  const out = n.connect(gain(ctx, parts, trim)).connect(limiter(ctx, parts)).connect(gain(ctx, parts, 0.71));
+  return { input, output: out, dispose: () => parts.dispose() };
+}
+
+/** Speech-like test sound: a 140 Hz buzz with harmonics, in syllables. */
+function testVoice(rate: number, seconds: number): Float32Array<ArrayBuffer> {
+  const d = new Float32Array(Math.round(rate * seconds));
+  for (let i = 0; i < d.length; i++) {
+    const t = i / rate;
+    let v = 0;
+    for (let h = 1; h < 20; h++) v += Math.sin(2 * Math.PI * 140 * h * t) / h;
+    d[i] = v * 0.08 * Math.max(0, Math.sin(2 * Math.PI * 3 * t)) ** 2;
+  }
+  return d;
+}
+
+/** Loudness of an effect relative to the plain voice, dB (positive: louder). */
+export async function effectGainDb(build: (ctx: BaseAudioContext) => EffectGraph): Promise<number> {
+  const rate = 48_000;
+  const dry = testVoice(rate, 2.5);
+  const c = new OfflineAudioContext(1, dry.length, rate);
+  const buf = c.createBuffer(1, dry.length, rate);
+  buf.copyToChannel(dry, 0);
+  const src = c.createBufferSource();
+  src.buffer = buf;
+  const fx = build(c);
+  src.connect(fx.input);
+  fx.output.connect(c.destination);
+  src.start();
+  const wet = (await c.startRendering()).getChannelData(0);
+  let a = 0;
+  let b = 0;
+  for (let i = Math.round(rate * 0.4); i < dry.length; i++) {
+    a += wet[i] * wet[i];
+    b += dry[i] * dry[i];
+  }
+  return 10 * Math.log10((a + 1e-12) / (b + 1e-12));
+}
+
+/** The trim that brings a preset to the level of the plain voice. */
+export async function calibrateTrim(p: VoiceParams): Promise<number> {
+  const db = await effectGainDb((ctx) => buildCustom(ctx, p, 1));
+  return Math.min(8, Math.max(0.02, Math.round(Math.pow(10, -db / 20) * 1000) / 1000));
 }

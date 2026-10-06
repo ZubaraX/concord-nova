@@ -1,7 +1,7 @@
 // HTTP client: bearer auth, proactive + reactive token refresh (single flight,
 // so parallel requests never race each other), typed errors with the server's
 // stable error codes, and uploads with progress.
-import type { AttachmentDTO } from "@nova/shared";
+import type { AttachmentDTO, SoundDTO } from "@nova/shared";
 import { apiUrl, switchToFallback } from "./server";
 import { platform } from "./platform";
 
@@ -240,7 +240,11 @@ async function uploadTo<T>(path: string, file: Blob, filename: string, opts: Upl
 
 export const uploadAttachment = (file: Blob, filename: string, opts?: UploadOptions) => uploadTo<AttachmentDTO>("/api/attachments", file, filename, opts);
 
-export const uploadImage = (file: Blob, kind: "avatar" | "banner" | "icon" | "guild_banner" | "group_icon") =>
+export const uploadImage = (file: Blob, kind: "avatar" | "banner" | "icon" | "guild_banner" | "group_icon" | "sound_icon") =>
   uploadTo<{ url: string; animated: boolean }>("/api/images", file, (file as File).name || "image", { query: { kind } });
+
+/** A soundboard sound: the audio as the file, its name, emoji or icon and target server in the query. */
+export const uploadSound = (file: Blob, filename: string, meta: { name: string; emoji?: string; image?: string; guildId?: string }) =>
+  uploadTo<SoundDTO>("/api/sounds", file, filename, { query: meta });
 
 export const uploadEmoji = (guildId: string, file: Blob, name: string) => uploadTo(`/api/guilds/${guildId}/emojis`, file, (file as File).name || "emoji", { query: { name } });

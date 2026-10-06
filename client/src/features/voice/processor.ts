@@ -14,7 +14,8 @@
 import type { Track } from "livekit-client";
 import type { AudioProcessorOptions, TrackProcessor } from "livekit-client";
 import { settings } from "../../store/settings";
-import { buildEffect, type EffectGraph, type VoiceEffect } from "./effects";
+import type { VoiceParams } from "@nova/shared";
+import { buildEffect, type EffectGraph } from "./effects";
 
 // DeepFilterNet3: the WASM runtime and the model ship with the app (public/df3),
 // nothing is fetched from third-party servers.
@@ -151,7 +152,7 @@ export class MicProcessor implements TrackProcessor<Track.Kind.Audio, AudioProce
   }
 
   /** Swap the voice effect while talking (no republish). */
-  setEffect(effect: VoiceEffect) {
+  setEffect(effect: string, override?: VoiceParams) {
     const { ctx, gate, dest } = this;
     if (!ctx || !gate || !dest) return;
     try {
@@ -160,7 +161,7 @@ export class MicProcessor implements TrackProcessor<Track.Kind.Audio, AudioProce
       /* not connected yet */
     }
     this.fx?.dispose();
-    this.fx = buildEffect(ctx, effect);
+    this.fx = buildEffect(ctx, effect, override);
     gate.connect(this.fx.input);
     this.fx.output.connect(dest);
   }
@@ -329,8 +330,12 @@ export class MicProcessor implements TrackProcessor<Track.Kind.Audio, AudioProce
   }
 }
 
-/** Mic test for settings: the same chain, played back to the user. */
-export async function startMicTest(onLevel: (db: number) => void): Promise<() => void> {
+/**
+ * Mic test for settings: the same chain, played back to the user. `preview`
+ * hears a voice preset still being edited instead of the chosen effect; the
+ * returned function stops the test, and `.update` changes the preview live.
+ */
+export async function startMicTest(onLevel: (db: number) => void, preview?: VoiceParams): Promise<(() => void) & { update(p: VoiceParams): void }> {
   const s = settings();
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: {
@@ -342,17 +347,19 @@ export async function startMicTest(onLevel: (db: number) => void): Promise<() =>
   });
   const proc = new MicProcessor(() => ({ muted: false, pttDown: true }));
   await proc.init({ kind: "audio" as Track.Kind.Audio, track: stream.getAudioTracks()[0], audioContext: undefined as unknown as AudioContext });
+  if (preview) proc.setEffect("preview", preview);
   const out = new Audio();
   out.srcObject = new MediaStream([proc.processedTrack!]);
   const sinkable = out as HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> };
   if (s.outputDevice && sinkable.setSinkId) await sinkable.setSinkId(s.outputDevice).catch(() => {});
   void out.play().catch(() => {});
   const id = setInterval(() => onLevel(proc.level), 50);
-  return () => {
+  const stop = () => {
     clearInterval(id);
     out.pause();
     out.srcObject = null;
     void proc.destroy();
     stream.getTracks().forEach((t) => t.stop());
   };
+  return Object.assign(stop, { update: (p: VoiceParams) => proc.setEffect("preview", p) });
 }

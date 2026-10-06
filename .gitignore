@@ -29,3 +29,6 @@ client/android/
 # Playwright end-to-end runs
 .e2e-results/
 .e2e-screens/
+
+# Native helper built by client/scripts/build-native.mjs
+client/native/bin/

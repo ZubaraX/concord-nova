@@ -23,10 +23,16 @@ const isVideo = (a: AttachmentDTO) => !!a.contentType?.startsWith("video/");
 const isVoice = (a: AttachmentDTO) => !!(a.flags & AttachmentFlags.VOICE_MESSAGE);
 const isAudio = (a: AttachmentDTO) => !!a.contentType?.startsWith("audio/") && !isVoice(a);
 
-function fit(w: number | null, h: number | null, maxW: number, maxH: number) {
-  if (!w || !h) return { width: maxW, height: Math.round(maxW * 0.6) };
-  const k = Math.min(1, maxW / w, maxH / h);
-  return { width: Math.max(40, Math.round(w * k)), height: Math.max(40, Math.round(h * k)) };
+/**
+ * A media frame that keeps the picture's proportions and never outgrows the
+ * chat: at most `maxW` × `maxH` px, the chat's width, and `tall` of the chat's
+ * height (the message list is a size container — next to a call it is narrow
+ * and short). `px` is the widest it can get, for picking a resized variant.
+ */
+function frame(w: number | null, h: number | null, maxW: number, maxH: number, tall = 0.6): { style: React.CSSProperties; px: number } {
+  const r = w && h ? w / h : 5 / 3;
+  const px = Math.max(40, Math.round(w && h ? Math.min(w, maxW, maxH * r) : maxW));
+  return { style: { width: `min(${px}px, 100%, ${(tall * 100 * r).toFixed(2)}cqh)`, aspectRatio: String(r) }, px };
 }
 
 function SpoilerCover({ children }: { children: React.ReactNode }) {
@@ -69,12 +75,12 @@ export const Attachments = memo(function Attachments({ items }: { items: Attachm
 
 function MediaItem({ a, single, onOpen }: { a: AttachmentDTO; single?: boolean; onOpen: () => void }) {
   const animate = useSettings((s) => s.animateEmoji);
-  const size = single ? fit(a.width, a.height, Math.min(520, window.innerWidth - 110), 360) : null;
+  const size = single ? frame(a.width, a.height, 520, 360) : null;
   const gif = a.contentType === "image/gif";
   const image = (
-    <button onClick={onOpen} className={clsx("block overflow-hidden rounded-xl bg-raised", !single && "aspect-square w-full")} style={size ?? undefined}>
+    <button onClick={onOpen} className={clsx("block overflow-hidden rounded-xl bg-raised", !single && "aspect-square w-full", single && gif && "h-full w-full")} style={single && !gif ? size?.style : undefined}>
       <img
-        src={gif && animate ? mediaUrl(a.url) : mediaUrl(a.url, single ? (size?.width ?? 520) : 260)}
+        src={gif && animate ? mediaUrl(a.url) : mediaUrl(a.url, single ? (size?.px ?? 520) : 260)}
         alt={a.filename}
         loading="lazy"
         decoding="async"
@@ -84,9 +90,9 @@ function MediaItem({ a, single, onOpen }: { a: AttachmentDTO; single?: boolean; 
     </button>
   );
   const el = isVideo(a) ? (
-    <video src={mediaUrl(a.url)} controls preload="metadata" className="max-h-[360px] max-w-full rounded-xl bg-canvas" style={size ?? undefined} />
+    <video src={mediaUrl(a.url)} controls preload="metadata" className={clsx("rounded-xl bg-canvas", single ? "max-w-full" : "aspect-square w-full object-cover")} style={size?.style} />
   ) : gif ? (
-    <div className={clsx("group/gif relative", single && "w-fit max-w-full")}>
+    <div className={clsx("group/gif relative", single && "max-w-full")} style={size?.style}>
       {image}
       <FavoriteStar gif={{ url: a.url, width: a.width, height: a.height }} />
     </div>
@@ -221,11 +227,10 @@ export function InstantGif({ src, link, favKey }: { src: string; link: string; f
     );
   }
   return (
-    <div className="group/gif relative mt-1 w-fit max-w-full">
+    <div className="group/gif relative mt-1 max-w-full" style={frame(dims?.width ?? null, dims?.height ?? null, 420, 320).style}>
       <button
         onClick={() => useUI.setState({ lightbox: { index: 0, items: [{ url, type: "image", width: dims?.width, height: dims?.height }] } })}
-        className="block max-w-full overflow-hidden rounded-xl bg-raised"
-        style={fit(dims?.width ?? null, dims?.height ?? null, 420, 320)}
+        className="block h-full w-full overflow-hidden rounded-xl bg-raised"
       >
         <img
           src={url}
@@ -256,15 +261,14 @@ export const Embeds = memo(function Embeds({ items }: { items: EmbedDTO[] }) {
 function Embed({ e }: { e: EmbedDTO }) {
   const [playing, setPlaying] = useState(false);
   if (e.type === "image" && e.image) {
-    const size = fit(e.image.width ?? null, e.image.height ?? null, 420, 320);
+    const size = frame(e.image.width ?? null, e.image.height ?? null, 420, 320);
     // Uploaded files are starred by their path on this server, everything else by its link.
     const own = e.image.url.startsWith("/files/");
     return (
-      <div className="group/gif relative w-fit max-w-full">
+      <div className="group/gif relative max-w-full" style={size.style}>
         <button
           onClick={() => useUI.setState({ lightbox: { index: 0, items: [{ url: mediaUrl(e.image!.url)!, type: "image", width: e.image!.width, height: e.image!.height }] } })}
-          className="block max-w-full overflow-hidden rounded-xl bg-raised"
-          style={size}
+          className="block h-full w-full overflow-hidden rounded-xl bg-raised"
         >
           <img src={mediaUrl(e.image.url)} alt="" loading="lazy" className="h-full w-full object-cover" />
         </button>
@@ -273,10 +277,10 @@ function Embed({ e }: { e: EmbedDTO }) {
     );
   }
   if (e.type === "gifv" && e.video) {
-    const size = fit(e.video.width ?? null, e.video.height ?? null, 400, 300);
+    const size = frame(e.video.width ?? null, e.video.height ?? null, 400, 300);
     return (
-      <div className="group/gif relative w-fit max-w-full">
-        <video src={e.video.url} autoPlay loop muted playsInline className="max-w-full rounded-xl bg-raised" style={size} poster={mediaUrl(e.thumbnail?.url)} />
+      <div className="group/gif relative max-w-full" style={size.style}>
+        <video src={e.video.url} autoPlay loop muted playsInline className="h-full w-full rounded-xl bg-raised object-cover" poster={mediaUrl(e.thumbnail?.url)} />
         <FavoriteStar gif={{ url: e.url, preview: e.thumbnail?.url, width: e.video.width, height: e.video.height }} />
       </div>
     );

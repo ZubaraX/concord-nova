@@ -5,7 +5,7 @@ import { create } from "zustand";
 import { api } from "../lib/api";
 import { setLocale, type Locale } from "../lib/i18n";
 import { setUse24h } from "../lib/time";
-import type { VoiceEffect } from "../features/voice/effects";
+import type { EffectId } from "../features/voice/effects";
 
 /** "custom": surfaces and text are derived from one colour the user picks (themeColor). */
 export type Theme = "nova" | "aurora" | "ember" | "graphite" | "oled" | "daylight" | "custom";
@@ -51,7 +51,8 @@ export interface LocalSettings {
   /** deep: DeepFilterNet3, rnnoise: the lighter model, standard: the browser's own, off. */
   noise: "deep" | "rnnoise" | "standard" | "off";
   /** Voice changer preset (features/voice/effects). */
-  voiceEffect: VoiceEffect;
+  /** A built-in effect or "custom:<preset id>". */
+  voiceEffect: EffectId;
   echoCancellation: boolean;
   autoGain: boolean;
   screenQuality: "720p30" | "1080p30" | "1080p60" | "1440p60" | "source";
@@ -100,6 +101,22 @@ const SYNC_DEFAULTS: SyncedSettings = {
   recentEmoji: [],
 };
 
+export const DEFAULT_KEYBINDS: Record<string, string> = {
+  toggleMute: "Ctrl+Shift+Alt+M",
+  toggleDeafen: "Ctrl+Shift+Alt+D",
+  toggleOverlay: "Ctrl+Shift+Alt+O",
+};
+
+/** What the desktop app registers system-wide ("" / null = not bound). */
+export function globalShortcutMap(k: Record<string, string> = useSettings.getState().keybinds): Record<string, string | null> {
+  return { toggleMute: k.toggleMute || null, toggleDeafen: k.toggleDeafen || null, toggleOverlay: k.toggleOverlay || null };
+}
+
+/** The way a pressed key is written in settings: "Ctrl+Shift+Alt+M". */
+export function comboOf(e: KeyboardEvent): string {
+  return [e.ctrlKey && "Ctrl", e.shiftKey && "Shift", e.altKey && "Alt", e.metaKey && "Super", e.code.replace(/^Key|^Digit/, "")].filter(Boolean).join("+");
+}
+
 const LOCAL_DEFAULTS: LocalSettings = {
   inputDevice: null,
   outputDevice: null,
@@ -127,7 +144,8 @@ const LOCAL_DEFAULTS: LocalSettings = {
   autostart: false,
   minimizeToTray: true,
   overlay: false,
-  keybinds: { toggleMute: "Ctrl+Shift+M", toggleDeafen: "Ctrl+Shift+D" },
+  // Three modifiers: games practically never use them, so a hotkey isn't hit mid-game by accident.
+  keybinds: { ...DEFAULT_KEYBINDS },
   lastChannels: {},
   memberListOpen: true,
   skinTone: 0,
@@ -241,6 +259,14 @@ export const preferredDenoiser = (): "deep" | "rnnoise" => (IS_PHONE ? "rnnoise"
   const s = useSettings.getState();
   // v1: RNNoise used to be the only neural option (and the default). Computers move to DeepFilterNet3.
   if (s.localVersion < 1) s.setLocal({ localVersion: 1, ...(s.noise === "rnnoise" ? { noise: preferredDenoiser() } : {}) });
+  // v2: the old default hotkeys (Ctrl+Shift+M / D) were hit in games — move them to the new ones unless they were changed.
+  if (useSettings.getState().localVersion < 2) {
+    const k = { ...useSettings.getState().keybinds };
+    if (!k.toggleMute || k.toggleMute === "Ctrl+Shift+M") k.toggleMute = DEFAULT_KEYBINDS.toggleMute;
+    if (!k.toggleDeafen || k.toggleDeafen === "Ctrl+Shift+D") k.toggleDeafen = DEFAULT_KEYBINDS.toggleDeafen;
+    if (!k.toggleOverlay) k.toggleOverlay = DEFAULT_KEYBINDS.toggleOverlay;
+    useSettings.getState().setLocal({ localVersion: 2, keybinds: k });
+  }
 }
 
 function hexToRgb(hex: string): [number, number, number] | null {

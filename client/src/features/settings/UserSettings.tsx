@@ -14,7 +14,7 @@ import { deleteAsset, putAsset } from "../../lib/assets";
 import { useData } from "../../store/data";
 import { logout } from "../../store/session";
 import { confirmDialog } from "../../store/ui";
-import { customThemeVars, settings, useSettings, type Theme, type Effects } from "../../store/settings";
+import { comboOf, customThemeVars, globalShortcutMap, settings, useSettings, type Theme, type Effects } from "../../store/settings";
 import { AvatarDecoration, Backdrop, BACKDROPS, DECORATIONS } from "../../components/ui/cosmetics";
 import { ColorButton } from "../../components/ui/ColorPicker";
 import { useCustomWallpaper } from "../chat/Wallpaper";
@@ -22,8 +22,9 @@ import { Button, Input, Textarea, Switch, SettingRow, Slider, Segmented, Field, 
 import { UserAvatar } from "../../components/ui/avatar";
 import { Markdown } from "../chat/markdown";
 import { startMicTest } from "../voice/processor";
-import { VOICE_EFFECTS } from "../voice/effects";
+import { VoiceEffectsGrid } from "../voice/VoicePresets";
 import { SoundboardPanel } from "../voice/Soundboard";
+import { holdMicForTest, useVoice } from "../voice/voice";
 import { Modal, ModalFooter, ModalHeader } from "../../components/ui/overlay";
 import { SettingsLayout, SectionTitle, Group } from "./SettingsLayout";
 import { AdminGuilds, AdminOverview, AdminUsers } from "./AdminSettings";
@@ -583,10 +584,18 @@ function Voice() {
   const [testing, setTesting] = useState(false);
   const [level, setLevel] = useState(-100);
   const stopRef = useRef<(() => void) | null>(null);
+  const releaseCall = useRef<(() => void) | null>(null);
+  const inCall = useVoice((v) => v.state === "connected");
   const [cam, setCam] = useState<MediaStream | null>(null);
   const video = useRef<HTMLVideoElement>(null);
 
-  useEffect(() => () => stopRef.current?.(), []);
+  useEffect(
+    () => () => {
+      stopRef.current?.();
+      releaseCall.current?.();
+    },
+    []
+  );
   useEffect(() => () => cam?.getTracks().forEach((x) => x.stop()), [cam]);
   useEffect(() => {
     if (video.current && cam) video.current.srcObject = cam;
@@ -596,14 +605,20 @@ function Voice() {
     if (testing) {
       stopRef.current?.();
       stopRef.current = null;
+      releaseCall.current?.();
+      releaseCall.current = null;
       setTesting(false);
       setLevel(-100);
       return;
     }
+    // Others in the call don't hear the check.
+    releaseCall.current = holdMicForTest();
     try {
       stopRef.current = await startMicTest(setLevel);
       setTesting(true);
     } catch {
+      releaseCall.current();
+      releaseCall.current = null;
       toast(t("errors.microphone_denied"), "error");
     }
   };
@@ -651,7 +666,10 @@ function Voice() {
             ))}
           </div>
         </div>
-        <p className="pb-3 text-[13px] text-fg-3">{t("settings.micTestHint")}</p>
+        <p className="pb-3 text-[13px] text-fg-3">
+          {t("settings.micTestHint")}
+          {inCall && <span className={clsx("block", testing && "font-semibold text-warn")}>{t("settings.micTestCall")}</span>}
+        </p>
       </Group>
       <Group title={t("settings.inputMode")}>
         <div className="py-3">
@@ -717,17 +735,7 @@ function Voice() {
         </div>
       </Group>
       <Group title={t("voice.fx.title")}>
-        <div className="grid grid-cols-2 gap-2 py-3 sm:grid-cols-5" data-voice-effects>
-          {VOICE_EFFECTS.map((e) => (
-            <button
-              key={e}
-              onClick={() => s.setLocal({ voiceEffect: e })}
-              className={clsx("rounded-xl px-2 py-2.5 text-[13.5px] font-semibold ring-1 transition-colors", s.voiceEffect === e ? "bg-star/15 text-star ring-star/50" : "text-fg-2 ring-line/15 hover:bg-raised hover:text-fg")}
-            >
-              {t(`voice.fx.${e}`)}
-            </button>
-          ))}
-        </div>
+        <VoiceEffectsGrid />
         <p className="pb-3 text-[13px] text-fg-3">{t("voice.fx.hint")}</p>
       </Group>
       <Group title={t("settings.camera")}>
@@ -789,13 +797,16 @@ function KeyRecorder({ value, onChange, codeMode }: { value: string; onChange: (
       e.preventDefault();
       e.stopPropagation();
       if (e.key === "Escape") return setRec(false);
+      if (!codeMode && (e.key === "Backspace" || e.key === "Delete") && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+        onChange("");
+        return setRec(false);
+      }
       if (codeMode) {
         onChange(e.code);
         return setRec(false);
       }
       if (["Control", "Shift", "Alt", "Meta"].includes(e.key)) return;
-      const combo = [e.ctrlKey && "Ctrl", e.shiftKey && "Shift", e.altKey && "Alt", e.metaKey && "Super", e.code.replace(/^Key|^Digit/, "")].filter(Boolean).join("+");
-      onChange(combo);
+      onChange(comboOf(e));
       setRec(false);
     };
     window.addEventListener("keydown", onKey, true);
@@ -803,7 +814,7 @@ function KeyRecorder({ value, onChange, codeMode }: { value: string; onChange: (
   }, [rec, onChange, codeMode]);
   return (
     <button onClick={() => setRec(true)} className={clsx("min-w-[140px] rounded-lg px-3 py-2 text-[13.5px] font-semibold ring-1", rec ? "animate-pulse bg-bad/15 text-bad ring-bad/50" : "bg-canvas/70 ring-line/15 hover:ring-star/50")}>
-      {rec ? t("settings.kbPressKey") : value || "—"}
+      {rec ? t("settings.kbPressKey") : value || t("settings.kbNone")}
     </button>
   );
 }
@@ -813,7 +824,7 @@ function Keybinds() {
   const setBind = (action: string, combo: string) => {
     const keybinds = { ...s.keybinds, [action]: combo };
     s.setLocal({ keybinds });
-    if (isDesktop) window.nova!.setGlobalShortcuts({ toggleMute: keybinds.toggleMute ?? null, toggleDeafen: keybinds.toggleDeafen ?? null });
+    if (isDesktop) window.nova!.setGlobalShortcuts(globalShortcutMap(keybinds));
   };
   const rows: [string, string, React.ReactNode][] = [
     [t("settings.kbQuickSwitcher"), "", <Kbd key="k">Ctrl+K</Kbd>],
@@ -831,6 +842,11 @@ function Keybinds() {
         <SettingRow title={t("settings.kbToggleDeafen")}>
           <KeyRecorder value={s.keybinds.toggleDeafen ?? ""} onChange={(v) => setBind("toggleDeafen", v)} />
         </SettingRow>
+        {isDesktop && (
+          <SettingRow title={t("settings.kbToggleOverlay")}>
+            <KeyRecorder value={s.keybinds.toggleOverlay ?? ""} onChange={(v) => setBind("toggleOverlay", v)} />
+          </SettingRow>
+        )}
         <SettingRow title={t("settings.kbPtt")}>
           <KeyRecorder value={s.pttKey} onChange={(code) => s.setLocal({ pttKey: code })} codeMode />
         </SettingRow>

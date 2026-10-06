@@ -572,6 +572,85 @@ describe("gifs", () => {
   });
 });
 
+describe("soundboard sounds and voice presets", () => {
+  /** A short tone as a WAV file. */
+  const wav = () => {
+    const n = 8000;
+    const b = Buffer.alloc(44 + n * 2);
+    b.write("RIFF", 0);
+    b.writeUInt32LE(36 + n * 2, 4);
+    b.write("WAVEfmt ", 8);
+    b.writeUInt32LE(16, 16);
+    b.writeUInt16LE(1, 20);
+    b.writeUInt16LE(1, 22);
+    b.writeUInt32LE(16000, 24);
+    b.writeUInt32LE(32000, 28);
+    b.writeUInt16LE(2, 32);
+    b.writeUInt16LE(16, 34);
+    b.write("data", 36);
+    b.writeUInt32LE(n * 2, 40);
+    for (let i = 0; i < n; i++) b.writeInt16LE(Math.round(Math.sin(i / 5) * 9000), 44 + i * 2);
+    return b;
+  };
+  const upload = async (acc: Acc, file: Buffer, type: string, query: Record<string, string>) => {
+    const form = new FormData();
+    form.append("file", new Blob([new Uint8Array(file)], { type }), "sound.wav");
+    const res = await fetch(`${base}/api/sounds?${new URLSearchParams(query)}`, { method: "POST", headers: { authorization: `Bearer ${acc.token}` }, body: form });
+    return { status: res.status, body: await res.json().catch(() => null) };
+  };
+  const params = { pitch: -5, robot: 0.3, robotHz: 60, drive: 0.2, lowpass: 6000, highpass: 120, echo: 0, echoMs: 250, reverb: 0.2, room: 1.5, tremolo: 0, tremoloHz: 5, trim: 0.8 };
+
+  it("own sounds follow the owner; server sounds every member; only the author or an emoji manager changes them", async () => {
+    const owner = await register("sbowner");
+    const member = await register("sbmember");
+    const stranger = await register("sbstranger");
+    const g = (await api("POST", "/api/guilds", owner.token, { name: "Звуки", template: "default", locale: "ru" })).body;
+    const inv = await api("POST", `/api/guilds/${g.id}/invites`, owner.token, { maxAge: 3600, maxUses: 0 });
+    expect((await api("POST", `/api/invites/${inv.body.code}`, member.token)).status).toBe(200);
+    const ownerLive = await live(owner);
+
+    // Personal: only the owner sees it, on any device.
+    const mine = await upload(member, wav(), "audio/wav", { name: "Бадумтс", emoji: "🥁" });
+    expect(mine.status, JSON.stringify(mine.body)).toBe(201);
+    expect(mine.body).toMatchObject({ name: "Бадумтс", emoji: "🥁", guildId: null, ownerId: member.id });
+    const served = await fetch(base + mine.body.url);
+    expect(served.headers.get("content-type")).toBe("audio/wav");
+    expect((await api("GET", "/api/expressions", member.token)).body.sounds.map((s: { id: string }) => s.id)).toContain(mine.body.id);
+    expect((await api("GET", "/api/expressions", owner.token)).body.sounds.map((s: { id: string }) => s.id)).not.toContain(mine.body.id);
+
+    // Shared with the server: every member gets it, live.
+    const shared = await upload(member, wav(), "audio/wav", { name: "Горн", emoji: "📯", guildId: g.id });
+    expect(shared.status).toBe(201);
+    await ownerLive.waitFor("SOUND_UPSERT", (s) => s.id === shared.body.id);
+    expect((await api("GET", "/api/expressions", owner.token)).body.sounds.map((s: { id: string }) => s.id)).toContain(shared.body.id);
+    // …but not to people outside it.
+    expect((await upload(stranger, wav(), "audio/wav", { name: "Нет", guildId: g.id })).status).toBe(404);
+    expect((await api("GET", "/api/expressions", stranger.token)).body.sounds).toEqual([]);
+
+    // Not audio → refused; nobody else edits a personal sound.
+    expect((await upload(member, Buffer.from("<html>nope</html>"), "audio/wav", { name: "html" })).body.error.code).toBe("invalid_audio");
+    expect((await api("PATCH", `/api/sounds/${mine.body.id}`, owner.token, { name: "чужое" })).status).toBe(403);
+    expect((await api("PATCH", `/api/sounds/${mine.body.id}`, member.token, { name: "Ба-дум" })).body.name).toBe("Ба-дум");
+
+    // The server owner (emoji manager) can remove a shared one; members are told.
+    expect((await api("DELETE", `/api/sounds/${shared.body.id}`, owner.token)).status).toBe(204);
+    await ownerLive.waitFor("SOUND_DELETE", (d) => d.id === shared.body.id && d.guildId === g.id);
+    expect((await fetch(base + shared.body.url)).status).toBe(404);
+    expect((await api("DELETE", `/api/sounds/${mine.body.id}`, owner.token)).status).toBe(403);
+    expect((await api("DELETE", `/api/sounds/${mine.body.id}`, member.token)).status).toBe(204);
+
+    // Voice presets: same rules, parameters are range-checked.
+    const preset = await api("POST", "/api/voice-presets", member.token, { name: "Мой бас", emoji: "🗿", params, guildId: g.id });
+    expect(preset.status, JSON.stringify(preset.body)).toBe(201);
+    await ownerLive.waitFor("VOICE_PRESET_UPSERT", (p) => p.id === preset.body.id);
+    expect((await api("GET", "/api/expressions", owner.token)).body.presets[0]).toMatchObject({ name: "Мой бас", params });
+    expect((await api("POST", "/api/voice-presets", member.token, { name: "x", params: { ...params, pitch: 40 } })).status).toBe(400);
+    expect((await api("PATCH", `/api/voice-presets/${preset.body.id}`, member.token, { params: { ...params, pitch: 3 } })).body.params.pitch).toBe(3);
+    expect((await api("DELETE", `/api/voice-presets/${preset.body.id}`, stranger.token)).status).toBe(403);
+    expect((await api("DELETE", `/api/voice-presets/${preset.body.id}`, member.token)).status).toBe(204);
+  });
+});
+
 describe("apps and links", () => {
   // The desktop app (app://nova) and the Android WebView call the API cross-origin:
   // every method the client uses must pass the CORS preflight.

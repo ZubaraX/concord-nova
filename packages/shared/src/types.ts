@@ -438,6 +438,61 @@ export interface GifDTO {
   slug?: string;
 }
 
+// ── soundboard sounds and voice presets ────────────────────────────────────
+/** A soundboard sound: yours on every device (`guildId` null), or a server's, for all its members. */
+export interface SoundDTO {
+  id: string;
+  ownerId: string;
+  guildId: string | null;
+  name: string;
+  emoji: string | null;
+  /** Icon picture (/files/…), or null for the emoji. */
+  image: string | null;
+  /** The audio file (/files/…). */
+  url: string;
+  createdAt: string;
+}
+
+/** A voice changer made of parameters (see client/src/features/voice/effects.ts). */
+export interface VoiceParams {
+  /** Semitones, −12 … +12. */
+  pitch: number;
+  /** Robot (ring modulation) mix 0…1 and its frequency, Hz. */
+  robot: number;
+  robotHz: number;
+  /** Distortion 0…1. */
+  drive: number;
+  /** Tone: low-pass and high-pass corner frequencies, Hz. */
+  lowpass: number;
+  highpass: number;
+  /** Echo mix 0…1 and its delay, ms. */
+  echo: number;
+  echoMs: number;
+  /** Reverb mix 0…1 and room size, seconds. */
+  reverb: number;
+  room: number;
+  /** Tremolo depth 0…1 and speed, Hz. */
+  tremolo: number;
+  tremoloHz: number;
+  /** Output gain that brings the result to the plain voice's level (measured when saved). */
+  trim: number;
+}
+
+export interface VoicePresetDTO {
+  id: string;
+  ownerId: string;
+  guildId: string | null;
+  name: string;
+  emoji: string | null;
+  params: VoiceParams;
+  createdAt: string;
+}
+
+export interface ExpressionsDTO {
+  sounds: SoundDTO[];
+  presets: VoicePresetDTO[];
+}
+
 /** GIF search runs in the apps, straight against the provider; the server only hands out the app key. */
 export interface GifConfigDTO {
   provider: "klipy" | null;

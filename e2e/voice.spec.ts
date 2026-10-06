@@ -227,3 +227,94 @@ test("voice changer: every effect produces sound, pitch effects move the pitch",
   expect(res.low.hz, JSON.stringify(res.low)).toBeLessThan(165);
   noErrors(s);
 });
+
+test("voice effects: none is much louder than the plain voice; an own effect is saved for the server and others can pick it", async ({ browser, request }) => {
+  test.skip(!!process.env.E2E_URL, "imports modules through the dev server");
+  const alice = await register(request, "Алиса");
+  const bob = await register(request, "Боб");
+  const { guild } = await guildWith(request, alice, [bob]);
+  const a = await openAs(browser, alice);
+  const b = await openAs(browser, bob);
+  const openVoiceSettings = async (page: Page) => {
+    await page.getByRole("button", { name: "Настройки" }).last().click();
+    await page.locator("[data-settings] nav").getByRole("button", { name: "Голос и видео", exact: true }).click();
+  };
+
+  // Alice builds one: lower, a bit of drive and reverb — for the server.
+  await openVoiceSettings(a.page);
+  await a.page.locator('[data-preset-group="mine"]').getByRole("button", { name: "Свой эффект" }).click();
+  const editor = a.page.getByRole("dialog").last();
+  await editor.getByPlaceholder("Мой голос").fill("Бас");
+  const ranges = editor.locator('input[type="range"]');
+  await ranges.nth(0).fill("-7"); // pitch
+  await ranges.nth(3).fill("0.6"); // drive
+  await ranges.nth(8).fill("0.4"); // reverb
+  await expect(ranges.nth(0)).toHaveAttribute("aria-valuetext", "-7");
+  await editor.getByLabel("Где сохранить").selectOption(guild.id);
+  await editor.getByRole("button", { name: "Добавить", exact: true }).click();
+  await expect(editor).toHaveCount(0);
+  const tile = (page: Page) => page.locator(`[data-preset-group="${guild.id}"] [data-preset]`).filter({ hasText: "Бас" });
+  await expect(tile(a.page)).toHaveAttribute("aria-pressed", "true"); // a new effect is put on at once
+
+  // Bob sees it under the server, can use it but not change it.
+  await openVoiceSettings(b.page);
+  await tile(b.page).click();
+  await expect(tile(b.page)).toHaveAttribute("aria-pressed", "true");
+  await expect(b.page.getByRole("button", { name: "Изменить: Бас" })).toHaveCount(0);
+
+  // Loudness, measured in Bob's app: every built-in and the shared one sit near the plain voice.
+  const presetId = await tile(b.page).getAttribute("data-preset");
+  const levels = await b.page.evaluate(async (id) => {
+    const url = performance.getEntriesByType("resource").map((e) => e.name).find((n) => n.includes("/src/features/voice/effects.ts")) ?? "/src/features/voice/effects.ts";
+    const m = (await import(/* @vite-ignore */ url)) as {
+      VOICE_EFFECTS: readonly string[];
+      buildEffect: (c: BaseAudioContext, e: string) => unknown;
+      effectGainDb: (build: (c: BaseAudioContext) => unknown) => Promise<number>;
+    };
+    const out: Record<string, number> = {};
+    for (const e of [...m.VOICE_EFFECTS, `custom:${id}`]) out[e] = Math.round((await m.effectGainDb((c) => m.buildEffect(c, e))) * 10) / 10;
+    return out;
+  }, presetId);
+  for (const [effect, db] of Object.entries(levels)) {
+    expect(Math.abs(db), `${effect}: ${db} dB against the plain voice`).toBeLessThan(3.5);
+  }
+  noErrors(a, b);
+});
+
+test("mic check in settings keeps the call from hearing it; hotkeys are rare combinations", async ({ browser, request }) => {
+  const alice = await register(request, "Алиса");
+  const bob = await register(request, "Боб");
+  const { guild, voice } = await guildWith(request, alice, [bob]);
+  const a = await openAs(browser, alice, `/#/channels/${guild.id}/${voice.id}`, { local: { noise: "off" } });
+  const b = await openAs(browser, bob, `/#/channels/${guild.id}/${voice.id}`);
+  const aliceSpeaks = b.page.locator(`[data-user="${alice.id}"] [data-speaking="true"]`);
+  await a.page.getByRole("button", { name: "Зайти в канал" }).click();
+  await b.page.getByRole("button", { name: "Зайти в канал" }).click();
+  await expect(aliceSpeaks).toBeVisible({ timeout: 20_000 });
+
+  // The check plays her voice back to her only.
+  await a.page.getByRole("button", { name: "Настройки" }).last().click();
+  await a.page.locator("[data-settings] nav").getByRole("button", { name: "Голос и видео", exact: true }).click();
+  await a.page.getByRole("button", { name: "Проверить", exact: true }).click();
+  await expect(a.page.getByText("Пока идёт проверка, собеседники в звонке вас не слышат.").first()).toBeVisible();
+  // (Bob's indicator is redrawn per animation frame: keep his window in front while looking at it.)
+  await b.page.bringToFront();
+  await expect(aliceSpeaks).toHaveCount(0, { timeout: 15_000 });
+  await a.page.bringToFront();
+  await a.page.getByRole("button", { name: "Остановить", exact: true }).click();
+  await b.page.bringToFront();
+  await expect(aliceSpeaks).toBeVisible({ timeout: 20_000 });
+  await a.page.bringToFront();
+  await a.page.keyboard.press("Escape");
+  await expect(a.page.locator("[data-settings]")).toHaveCount(0);
+
+  // Ctrl+Shift+M (often taken in games) does nothing now; Ctrl+Shift+Alt+M mutes.
+  const muteButton = a.page.getByRole("button", { name: "Включить микрофон" });
+  await a.page.keyboard.press("Control+Shift+KeyM");
+  await expect(muteButton).toHaveCount(0);
+  await a.page.keyboard.press("Control+Shift+Alt+KeyM");
+  await expect(muteButton.first()).toBeVisible();
+  await a.page.keyboard.press("Control+Shift+Alt+KeyM");
+  await expect(muteButton).toHaveCount(0);
+  noErrors(a, b);
+});

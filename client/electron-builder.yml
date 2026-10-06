@@ -12,6 +12,11 @@ files:
   - dist-electron/**/*
   - package.json
 asar: true
+# The Windows screen-share audio helper (scripts/build-native.mjs builds it).
+extraResources:
+  - from: native/bin
+    to: bin
+    filter: ["nova-loopback.exe"]
 npmRebuild: false
 buildDependenciesFromSource: false
 protocols:

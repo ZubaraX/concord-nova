@@ -5,6 +5,7 @@ import { bus } from "../lib/bus";
 import { clearPendingInvite } from "../lib/deeplink";
 import { connectGateway, disconnectGateway } from "../lib/gateway";
 import { resetGifs } from "../lib/gifs";
+import { resetExpressions } from "../features/voice/expressions";
 import { resetData } from "./data";
 import { resetMessages } from "./messages";
 
@@ -40,6 +41,7 @@ function endSession(reason: string | null) {
   resetData();
   resetMessages();
   resetGifs();
+  resetExpressions();
   useSession.setState({ status: "anon", endedReason: reason });
   bus.emit("logout", { reason: reason ?? "logout" });
 }

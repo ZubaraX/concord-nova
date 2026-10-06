@@ -57,6 +57,8 @@ model User {
   pollVotes            PollVote[]
   uploads              Attachment[]
   favoriteGifs         FavoriteGif[]
+  sounds               Sound[]
+  voicePresets         VoicePreset[]
 }
 
 /// One signed-in device. The refresh token is stored only as a SHA-256 hash.
@@ -90,6 +92,8 @@ model Guild {
   members  Member[]
   channels Channel[]
   emojis   Emoji[]
+  sounds   Sound[]
+  voicePresets VoicePreset[]
   invites  Invite[]
   bans     Ban[]
   auditLog AuditLog[]
@@ -392,6 +396,42 @@ model FavoriteGif {
 
   @@id([userId, url])
   @@index([userId, createdAt])
+}
+
+/// A soundboard sound: the owner's own (guildId null, on every device) or a
+/// server's (every member can play it in that server's calls).
+model Sound {
+  id        String   @id
+  ownerId   String
+  guildId   String?
+  name      String
+  emoji     String?
+  /// Icon picture, /files/… (null: the emoji)
+  image     String?
+  /// Audio file, relative to the storage dir
+  path      String
+  createdAt DateTime @default(now())
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  guild     Guild?   @relation(fields: [guildId], references: [id], onDelete: Cascade)
+
+  @@index([ownerId])
+  @@index([guildId])
+}
+
+/// A voice changer made of parameters (JSON VoiceParams), personal or shared with a server.
+model VoicePreset {
+  id        String   @id
+  ownerId   String
+  guildId   String?
+  name      String
+  emoji     String?
+  params    String
+  createdAt DateTime @default(now())
+  owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
+  guild     Guild?   @relation(fields: [guildId], references: [id], onDelete: Cascade)
+
+  @@index([ownerId])
+  @@index([guildId])
 }
 
 model ScheduledMessage {

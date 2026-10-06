@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import clsx from "clsx";
-import { Headphones, HeadphoneOff, Mic, MicOff, Settings, PhoneOff, Video, VideoOff, MonitorUp, MonitorX, AudioLines, Drama } from "lucide-react";
+import { Headphones, HeadphoneOff, Mic, MicOff, Settings, PhoneOff, Video, VideoOff, MonitorUp, MonitorX, AudioLines, Drama, Plus } from "lucide-react";
 import { api } from "../../lib/api";
 import { t } from "../../lib/i18n";
 import { fmtClock } from "../../lib/time";
@@ -15,6 +15,8 @@ import { UserAvatar, StatusDot } from "../../components/ui/avatar";
 import { ALONE_MS, leaveVoice, stayInCall, toggleCamera, toggleDeafen, toggleMute, toggleScreen, useVoice } from "../voice/voice";
 import { PingButton } from "../voice/ConnectionStats";
 import { SoundboardButton } from "../voice/Soundboard";
+import { effectName, usePresetGroups } from "../voice/VoicePresets";
+import { useExpressions } from "../voice/expressions";
 import { usePing } from "../voice/stats";
 import type { ChosenStatus } from "@nova/shared";
 
@@ -76,6 +78,7 @@ export function VoicePanel() {
         </IconButton>
       </div>
       {v.aloneSince && v.state === "connected" && <AloneCountdown since={v.aloneSince} />}
+      {v.micTest && v.state === "connected" && <div className="mt-2 rounded-lg bg-warn/10 px-2.5 py-1.5 text-[12.5px] leading-snug text-warn">{t("settings.micTestCall")}</div>}
       <div className="mt-2 grid grid-cols-5 gap-1.5">
         <button onClick={() => void toggleCamera()} className={clsx("flex h-8 items-center justify-center rounded-lg transition-colors", v.cameraOn ? "bg-star/20 text-star" : "bg-raised text-fg-2 hover:bg-overlay hover:text-fg")} aria-label={v.cameraOn ? t("voice.cameraOff") : t("voice.camera")}>
           {v.cameraOn ? <VideoOff size={17} /> : <Video size={17} />}
@@ -118,9 +121,14 @@ function NoiseToggle() {
 function VoiceEffectButton() {
   const effect = useSettings((s) => s.voiceEffect);
   const pop = usePopover();
+  const callChannel = useVoice((s) => s.channelId);
+  const callGuild = useData((s) => (callChannel ? (s.channels[callChannel]?.guildId ?? null) : null));
+  // Yours and, in a server's call, that server's.
+  const presetGroups = usePresetGroups(callGuild);
+  const presets = useExpressions((s) => s.presets);
   return (
     <>
-      <Tooltip content={`${t("voice.fx.title")}: ${t(`voice.fx.${effect}`)}`}>
+      <Tooltip content={`${t("voice.fx.title")}: ${effectName(effect, presets)}`}>
         <button
           onClick={pop.toggle}
           className={clsx("flex h-8 w-full items-center justify-center rounded-lg transition-colors", effect !== "none" ? "bg-star/20 text-star" : "bg-raised text-fg-2 hover:bg-overlay hover:text-fg")}
@@ -132,7 +140,13 @@ function VoiceEffectButton() {
       <Popover anchor={pop.anchor} onClose={pop.close} placement="top">
         <MenuList
           onClose={pop.close}
-          items={VOICE_EFFECTS.map((e) => ({ label: t(`voice.fx.${e}`), checked: effect === e, keepOpen: false, onSelect: () => useSettings.getState().setLocal({ voiceEffect: e }) }))}
+          items={[
+            ...VOICE_EFFECTS.map((e) => ({ label: t(`voice.fx.${e}`), checked: effect === e, keepOpen: false, onSelect: () => useSettings.getState().setLocal({ voiceEffect: e }) })),
+            ...presetGroups.flatMap((g) =>
+              g.items.map((p) => ({ label: `${p.emoji ? p.emoji + " " : ""}${p.name}`, checked: effect === `custom:${p.id}`, keepOpen: false, onSelect: () => useSettings.getState().setLocal({ voiceEffect: `custom:${p.id}` }) }))
+            ),
+            { label: t("voice.fx.add"), icon: <Plus size={15} />, keepOpen: false, onSelect: () => useUI.getState().pushModal({ kind: "voicePreset", guildId: callGuild }) },
+          ]}
         />
       </Popover>
     </>

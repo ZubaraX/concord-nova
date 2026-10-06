@@ -297,7 +297,7 @@ export function VoiceStage({ channelId, compact, onToggleChat, chatOpen }: { cha
           ))}
         </div>
       </div>
-      <Controls channelId={channelId} compact={compact} fullscreen={fullscreen} onFullscreen={() => (document.fullscreenElement ? void document.exitFullscreen() : void root.current?.requestFullscreen())} onToggleChat={onToggleChat} chatOpen={chatOpen} guildId={guildId} />
+      <Controls channelId={channelId} compact={compact} fullscreen={fullscreen} onFullscreen={() => (document.fullscreenElement ? void document.exitFullscreen() : void root.current?.requestFullscreen())} onToggleChat={onToggleChat} chatOpen={chatOpen} guildId={guildId} narrow={w > 0 && w < 640} />
     </div>
   );
 }
@@ -312,6 +312,7 @@ function Controls({
   onToggleChat,
   chatOpen,
   guildId,
+  narrow,
 }: {
   channelId: string;
   compact?: boolean;
@@ -320,9 +321,12 @@ function Controls({
   onToggleChat?: () => void;
   chatOpen?: boolean;
   guildId: string | null;
+  /** The stage is narrow (the chat is open beside it): smaller buttons, fewer extras. */
+  narrow?: boolean;
 }) {
   const v = useVoice();
-  const mobile = useIsMobile();
+  const phone = useIsMobile();
+  const mobile = phone || !!narrow;
   const react = usePopover();
   const share = usePopover();
   const quality = useSettings((s) => s.screenQuality);
@@ -331,13 +335,14 @@ function Controls({
   const neutral = "bg-raised text-fg hover:bg-overlay";
   return (
     <div className={clsx("pointer-events-none absolute inset-x-0 bottom-0 flex justify-center", compact ? "pb-2" : "pb-5")}>
-      <div className={clsx("glass pointer-events-auto flex max-w-[calc(100%-8px)] items-center overflow-x-auto rounded-[22px] p-2 shadow-lift [scrollbar-width:none] [&::-webkit-scrollbar]:hidden", mobile ? "gap-1.5" : "gap-2")}>
+      {/* Never wider than the stage: what doesn’t fit wraps to a second row (it used to scroll the hang-up button out of sight). */}
+      <div className={clsx("glass pointer-events-auto flex max-w-[calc(100%-12px)] flex-wrap items-center justify-center rounded-[22px] p-2 shadow-lift", mobile ? "gap-1.5" : "gap-2")}>
         <Tooltip content={v.muted ? t("voice.unmute") : t("voice.mute")}>
           <button onClick={toggleMute} className={clsx(btn, v.muted || v.deafened ? "bg-bad/20 text-bad" : neutral)} aria-label={t("voice.mute")}>
             {v.muted || v.deafened ? <MicOff size={21} /> : <Mic size={21} />}
           </button>
         </Tooltip>
-        {!mobile && (
+        {!phone && (
           <Tooltip content={v.deafened ? t("voice.undeafen") : t("voice.deafen")}>
             <button onClick={toggleDeafen} className={clsx(btn, v.deafened ? "bg-bad/20 text-bad" : neutral)} aria-label={t("voice.deafen")}>
               {v.deafened ? <HeadphoneOff size={21} /> : <Headphones size={21} />}
@@ -349,7 +354,7 @@ function Controls({
             {v.cameraOn ? <Video size={21} /> : <VideoOff size={21} />}
           </button>
         </Tooltip>
-        {v.cameraOn && mobile && (
+        {v.cameraOn && phone && (
           <button onClick={() => void flipCamera()} className={clsx(btn, neutral)} aria-label={t("voice.flipCamera")}>
             <SwitchCamera size={21} />
           </button>

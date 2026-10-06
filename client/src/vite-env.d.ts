@@ -23,6 +23,9 @@ interface NovaDesktop {
   selectSource(id: string | null, withAudio: boolean): void;
   /** Main process asks the renderer to show the screen picker. */
   onScreenPick(cb: () => void): () => void;
+  /** Screen-share audio captured without Nova itself (Windows): start, 48 kHz stereo 16-bit PCM chunks, end. Absent in older shells. */
+  onAppAudio?(cb: (kind: "start" | "pcm" | "end", pcm?: Uint8Array) => void): () => void;
+  stopAppAudio?(): void;
   setCloseToTray(on: boolean): void;
   setBadge(count: number, dataUrl: string | null): void;
   flashFrame(on: boolean): void;

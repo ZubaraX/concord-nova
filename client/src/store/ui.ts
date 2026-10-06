@@ -24,7 +24,8 @@ export type Modal =
   | { kind: "ban"; guildId: string; userId: string }
   | { kind: "timeout"; guildId: string; userId: string }
   | { kind: "nick"; guildId: string; userId: string }
-  | { kind: "sound"; id?: string }
+  | { kind: "sound"; id?: string; guildId?: string | null }
+  | { kind: "voicePreset"; id?: string; guildId?: string | null }
   | { kind: "screenPicker"; resolve: (r: { id: string | null; audio: boolean } | null) => void };
 
 export type SidePanel = "members" | "pins" | "search" | "thread" | "inbox" | "bookmarks" | null;

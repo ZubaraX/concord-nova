@@ -1,41 +1,25 @@
 // Soundboard UI: the grid of sounds behind the call's megaphone button (also
-// shown in voice settings), and the dialog that adds or changes a sound.
-import { useEffect, useRef, useState } from "react";
+// in voice settings), and the dialog that adds or changes a sound. Built-in
+// sounds, your own (on every device) and the ones shared with the server
+// you're talking in.
+import { useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
 import { ImagePlus, Megaphone, Pencil, Play, Plus, Square, Trash2, Upload, Volume2 } from "lucide-react";
-import { t } from "../../lib/i18n";
+import { MAX_GUILD_SOUNDS, MAX_OWN_SOUNDS, type SoundDTO } from "@nova/shared";
+import { errorText, t } from "../../lib/i18n";
 import { toast } from "../../lib/bus";
 import { decodeAudio, playBuffer } from "../../lib/sound";
+import { mediaUrl } from "../../lib/server";
+import { useData } from "../../store/data";
 import { useUI } from "../../store/ui";
 import { Button, Field, Input, Slider } from "../../components/ui/primitives";
 import { Modal, ModalFooter, ModalHeader, Popover, Tooltip, usePopover } from "../../components/ui/overlay";
 import { EmojiPicker } from "../chat/EmojiPicker";
-import { BUILTIN_CLIPS, MAX_CLIP_SECONDS, MAX_CUSTOM_CLIPS, checkClip, clipIcon, deleteClip, playClip, saveClip, setSoundboardVolume, stopClips, useSoundboard, type CustomClip } from "./clips";
+import { BUILTIN_CLIPS, MAX_CLIP_SECONDS, checkClip, playClip, setSoundboardVolume, stopClips, useSoundboard } from "./clips";
+import { addSound, canEdit, editSound, removeSound, useExpressions } from "./expressions";
 import { useVoice } from "./voice";
 
-/** The picture of a custom sound (an object URL that lives as long as the component). */
-function useClipPicture(clip: CustomClip | undefined): string | null {
-  const rev = useSoundboard((s) => s.iconRev);
-  const [url, setUrl] = useState<string | null>(null);
-  const id = clip?.image ? clip.id : null;
-  useEffect(() => {
-    if (!id) return setUrl(null);
-    let alive = true;
-    let made: string | null = null;
-    void clipIcon(id).then((blob) => {
-      if (!alive || !blob) return;
-      made = URL.createObjectURL(blob);
-      setUrl(made);
-    });
-    return () => {
-      alive = false;
-      if (made) URL.revokeObjectURL(made);
-    };
-  }, [id, rev]);
-  return url;
-}
-
-function ClipIcon({ emoji, picture, size = 28 }: { emoji: string | null; picture: string | null; size?: number }) {
+function ClipIcon({ emoji, picture, size = 28 }: { emoji: string | null; picture: string | null | undefined; size?: number }) {
   if (picture) return <img src={picture} alt="" draggable={false} className="rounded-lg object-cover" style={{ width: size + 4, height: size + 4 }} />;
   return (
     <span className="leading-none" style={{ fontSize: size }}>
@@ -44,9 +28,8 @@ function ClipIcon({ emoji, picture, size = 28 }: { emoji: string | null; picture
   );
 }
 
-function Tile({ id, name, emoji, custom, onEdit }: { id: string; name: string; emoji: string | null; custom?: CustomClip; onEdit?: () => void }) {
+function Tile({ id, name, emoji, picture, onEdit }: { id: string; name: string; emoji: string | null; picture?: string | null; onEdit?: () => void }) {
   const playing = useSoundboard((s) => !!s.playing[id]);
-  const picture = useClipPicture(custom);
   return (
     <div className="group/clip relative">
       <button
@@ -77,19 +60,57 @@ function Tile({ id, name, emoji, custom, onEdit }: { id: string; name: string; e
   );
 }
 
-/** The grid itself. `embedded` drops the popover chrome (voice settings). */
+function AddTile({ onClick }: { onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className="flex h-[82px] flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-line/25 text-fg-3 transition-colors hover:border-star/60 hover:text-star"
+    >
+      <Plus size={22} />
+      <span className="text-[11.5px] font-medium leading-tight">{t("soundboard.add")}</span>
+    </button>
+  );
+}
+
+function SoundTile({ s, onEdit }: { s: SoundDTO; onEdit: (id: string) => void }) {
+  return <Tile id={s.id} name={s.name} emoji={s.emoji} picture={s.image ? mediaUrl(s.image, 96) : null} onEdit={canEdit(s) ? () => onEdit(s.id) : undefined} />;
+}
+
+function Section({ title, children, testId }: { title: string; children: React.ReactNode; testId?: string }) {
+  return (
+    <section data-section={testId}>
+      <h4 className="mb-1.5 mt-3 truncate text-[12px] font-semibold uppercase tracking-wide text-fg-3">{title}</h4>
+      <div className="grid grid-cols-4 gap-1.5">{children}</div>
+    </section>
+  );
+}
+
+/**
+ * The grid itself. In a call it offers the built-in sounds, yours and the
+ * server's; `embedded` (voice settings) shows yours and those of every server.
+ */
 export function SoundboardPanel({ onClose, embedded }: { onClose?: () => void; embedded?: boolean }) {
-  const custom = useSoundboard((s) => s.custom);
   const volume = useSoundboard((s) => s.volume);
   const sounding = useSoundboard((s) => Object.keys(s.playing).length > 0);
   const inCall = useVoice((s) => s.state === "connected");
-  const edit = (id?: string) => {
+  const callChannel = useVoice((s) => s.channelId);
+  const callGuild = useData((s) => (callChannel ? (s.channels[callChannel]?.guildId ?? null) : null));
+  const me = useData((s) => s.me?.id);
+  const guilds = useData((s) => s.guilds);
+  const sounds = useExpressions((s) => s.sounds);
+  const supported = useExpressions((s) => s.supported);
+  const mine = sounds.filter((x) => !x.guildId && x.ownerId === me);
+  // Settings: every server you're in that has sounds; a call: the server you're talking in.
+  const serverIds = embedded ? [...new Set(sounds.filter((x) => x.guildId && guilds[x.guildId]).map((x) => x.guildId!))] : callGuild ? [callGuild] : [];
+
+  const edit = (id?: string, guildId?: string | null) => {
     onClose?.();
-    useUI.getState().pushModal({ kind: "sound", id });
+    useUI.getState().pushModal({ kind: "sound", id, guildId });
   };
   return (
     <div className={clsx(!embedded && "menu-surface w-[min(372px,calc(100vw-16px))] rounded-2xl p-3 shadow-lift")} data-soundboard>
-      <div className="mb-2.5 flex items-center gap-2.5">
+      <div className="mb-1 flex items-center gap-2.5">
         {!embedded && <h3 className="shrink-0 font-display text-[15px] font-semibold">{t("soundboard.title")}</h3>}
         <Volume2 size={15} className="shrink-0 text-fg-3" />
         <Slider value={volume} onChange={setSoundboardVolume} format={(v) => `${v}%`} className="min-w-0 flex-1" />
@@ -104,22 +125,34 @@ export function SoundboardPanel({ onClose, embedded }: { onClose?: () => void; e
           <Square size={12} fill="currentColor" />
         </button>
       </div>
-      <div className={clsx("grid grid-cols-4 gap-1.5", !embedded && "scroll-thin max-h-[min(362px,54vh)] overflow-y-auto")}>
-        {BUILTIN_CLIPS.map((c) => (
-          <Tile key={c.id} id={c.id} name={t(`soundboard.sounds.${c.id}`)} emoji={c.icon} />
-        ))}
-        {custom.map((c) => (
-          <Tile key={c.id} id={c.id} name={c.name} emoji={c.emoji} custom={c} onEdit={() => edit(c.id)} />
-        ))}
-        {custom.length < MAX_CUSTOM_CLIPS && (
-          <button
-            type="button"
-            onClick={() => edit()}
-            className="flex h-[82px] flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-line/25 text-fg-3 transition-colors hover:border-star/60 hover:text-star"
-          >
-            <Plus size={22} />
-            <span className="text-[11.5px] font-medium leading-tight">{t("soundboard.add")}</span>
-          </button>
+      <div className={clsx(!embedded && "scroll-thin max-h-[min(400px,58vh)] overflow-y-auto pr-0.5")}>
+        <Section title={t("soundboard.builtin")} testId="builtin">
+          {BUILTIN_CLIPS.map((c) => (
+            <Tile key={c.id} id={c.id} name={t(`soundboard.sounds.${c.id}`)} emoji={c.icon} />
+          ))}
+        </Section>
+        {supported ? (
+          <>
+            <Section title={t("soundboard.mine")} testId="mine">
+              {mine.map((s) => (
+                <SoundTile key={s.id} s={s} onEdit={(id) => edit(id)} />
+              ))}
+              {mine.length < MAX_OWN_SOUNDS && <AddTile onClick={() => edit(undefined, null)} />}
+            </Section>
+            {serverIds.map((gid) => {
+              const list = sounds.filter((x) => x.guildId === gid);
+              return (
+                <Section key={gid} title={t("soundboard.server", { name: guilds[gid]?.name ?? "…" })} testId={`guild:${gid}`}>
+                  {list.map((s) => (
+                    <SoundTile key={s.id} s={s} onEdit={(id) => edit(id)} />
+                  ))}
+                  {list.length < MAX_GUILD_SOUNDS && <AddTile onClick={() => edit(undefined, gid)} />}
+                </Section>
+              );
+            })}
+          </>
+        ) : (
+          <p className="mt-3 text-[12.5px] text-fg-3">{t("soundboard.serverOld")}</p>
         )}
       </div>
       <p className="mt-2.5 text-[12px] leading-snug text-fg-3">{inCall ? t("soundboard.hintCall") : t("soundboard.hintIdle")}</p>
@@ -149,12 +182,29 @@ export function SoundboardButton({ className, iconSize = 21, tooltip = true }: {
 // ── add / change a sound ─────────────────────────────────────────────────────
 const SUGGESTED = ["🔊", "😂", "🤣", "😱", "🤡", "💀", "🔥", "🎉", "👏", "😎", "🐱", "🐶", "🚀", "💩", "🎵", "⚡"];
 
-export function SoundModal({ id, onClose }: { id?: string; onClose: () => void }) {
-  const existing = useSoundboard((s) => s.custom.find((c) => c.id === id));
-  const savedPicture = useClipPicture(existing);
+/** "Only me" or one of your servers. */
+export function TargetSelect({ value, onChange }: { value: string | null; onChange: (v: string | null) => void }) {
+  const guilds = useData((s) => s.guilds);
+  const list = useMemo(() => Object.values(guilds).sort((a, b) => a.name.localeCompare(b.name)), [guilds]);
+  return (
+    <select value={value ?? ""} onChange={(e) => onChange(e.target.value || null)} aria-label={t("soundboard.where")} className="h-10 w-full rounded-lg bg-canvas px-3 outline-none ring-1 ring-line/10 focus:ring-star/60">
+      <option value="">{t("soundboard.onlyMe")}</option>
+      {list.map((g) => (
+        <option key={g.id} value={g.id}>
+          {t("soundboard.forServer", { name: g.name })}
+        </option>
+      ))}
+    </select>
+  );
+}
+
+export function SoundModal({ id, guildId, onClose }: { id?: string; guildId?: string | null; onClose: () => void }) {
+  const existing = useExpressions((s) => s.sounds.find((x) => x.id === id));
+  const guilds = useData((s) => s.guilds);
   const [name, setName] = useState(existing?.name ?? "");
   const [emoji, setEmoji] = useState<string | null>(existing?.emoji ?? "🔊");
   const [audio, setAudio] = useState<File | null>(null);
+  const [target, setTarget] = useState<string | null>(guildId ?? null);
   /** undefined — keep what is saved; null — no picture; a file — a new one. */
   const [picture, setPicture] = useState<File | null | undefined>(undefined);
   const [pictureUrl, setPictureUrl] = useState<string | null>(null);
@@ -170,7 +220,7 @@ export function SoundModal({ id, onClose }: { id?: string; onClose: () => void }
   }, [picture]);
   useEffect(() => () => stopPreview.current?.(), []);
 
-  const shownPicture = picture === undefined ? savedPicture : pictureUrl;
+  const shownPicture = picture === undefined ? (existing?.image ? mediaUrl(existing.image, 96) : null) : pictureUrl;
 
   const pick = (accept: string, then: (f: File) => void) => {
     const input = document.createElement("input");
@@ -209,10 +259,11 @@ export function SoundModal({ id, onClose }: { id?: string; onClose: () => void }
     if (!existing && !audio) return;
     setBusy(true);
     try {
-      await saveClip({ name, emoji, audio: audio ?? undefined, picture }, existing?.id);
+      if (existing) await editSound(existing.id, { name, emoji, picture });
+      else await addSound(audio!, { name, emoji, picture, guildId: target, filename: audio!.name });
       onClose();
-    } catch {
-      toast(t("soundboard.error.save"), "error");
+    } catch (e) {
+      toast(errorText(e), "error");
     } finally {
       setBusy(false);
     }
@@ -220,19 +271,26 @@ export function SoundModal({ id, onClose }: { id?: string; onClose: () => void }
 
   const remove = async () => {
     if (!existing) return;
-    await deleteClip(existing.id);
-    onClose();
+    try {
+      await removeSound(existing.id);
+      onClose();
+    } catch (e) {
+      toast(errorText(e), "error");
+    }
   };
 
+  const where = existing ? (existing.guildId ? t("soundboard.forServer", { name: guilds[existing.guildId]?.name ?? "…" }) : t("soundboard.onlyMe")) : null;
   return (
-    <Modal open onClose={onClose} width={440} label={existing ? t("soundboard.editTitle") : t("soundboard.addTitle")}>
+    <Modal open onClose={onClose} width={460} label={existing ? t("soundboard.editTitle") : t("soundboard.addTitle")}>
       <ModalHeader title={existing ? t("soundboard.editTitle") : t("soundboard.addTitle")} subtitle={t("soundboard.addHint", { s: MAX_CLIP_SECONDS })} />
       <div className="flex flex-col gap-4 px-6 pb-5 pt-2">
         <Field label={t("soundboard.file")}>
           <div className="flex items-center gap-2">
-            <Button variant="secondary" icon={<Upload size={16} />} onClick={pickAudio}>
-              {audio || existing ? t("soundboard.replaceFile") : t("soundboard.chooseFile")}
-            </Button>
+            {!existing && (
+              <Button variant="secondary" icon={<Upload size={16} />} onClick={pickAudio}>
+                {audio ? t("soundboard.replaceFile") : t("soundboard.chooseFile")}
+              </Button>
+            )}
             {(audio || existing) && (
               <Button variant="ghost" icon={<Play size={15} />} onClick={() => void preview()}>
                 {t("soundboard.listen")}
@@ -275,6 +333,9 @@ export function SoundModal({ id, onClose }: { id?: string; onClose: () => void }
               </div>
             </div>
           </div>
+        </Field>
+        <Field label={t("soundboard.where")} hint={existing ? undefined : t("soundboard.whereHint")}>
+          {existing ? <p className="text-[14px] text-fg-2">{where}</p> : <TargetSelect value={target} onChange={setTarget} />}
         </Field>
       </div>
       <ModalFooter className={existing ? "justify-between" : undefined}>

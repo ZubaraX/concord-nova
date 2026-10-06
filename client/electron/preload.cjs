@@ -14,6 +14,8 @@ contextBridge.exposeInMainWorld("nova", {
   getSources: () => ipcRenderer.invoke("screen:sources"),
   selectSource: (id, withAudio) => ipcRenderer.send("screen:select", id, withAudio),
   onScreenPick: (cb) => on("screen:pick", cb),
+  onAppAudio: (cb) => on("appaudio", cb),
+  stopAppAudio: () => ipcRenderer.send("appaudio:stop"),
   setBadge: (count, dataUrl) => ipcRenderer.send("badge", { count, dataUrl }),
   flashFrame: (flag) => ipcRenderer.send("flash", flag),
   notify: (title, body, tag) => ipcRenderer.send("notify", { title, body, tag }),

@@ -2,19 +2,20 @@
 // the outgoing microphone track — past the denoiser, the gate and the voice
 // effect — so everybody hears it as it is, even while the mic is muted, and
 // every client version can play it. The built-in set is synthesized (nothing
-// to ship or license); the user's own sounds and their icons live on this
-// device, next to the ringtone and the wallpaper.
+// to ship or license); your own sounds and the ones shared with a server are
+// kept on the server (expressions.ts), so they are on every device.
 import { create } from "zustand";
+import { MAX_SOUND_BYTES } from "@nova/shared";
 import { toast } from "../../lib/bus";
 import { t } from "../../lib/i18n";
-import { deleteAsset, getAsset, putAsset } from "../../lib/assets";
 import { decodeAudio, playBuffer } from "../../lib/sound";
+import { mediaUrl } from "../../lib/server";
 import { playIntoCall, useVoice } from "./voice";
+import { useExpressions } from "./expressions";
 
 export const MAX_CLIP_SECONDS = 30;
-export const MAX_CLIP_BYTES = 10 * 1024 * 1024;
-export const MAX_CUSTOM_CLIPS = 48;
-const ICON_PX = 96;
+/** As much as the server takes (MAX_SOUND_BYTES). */
+export const MAX_CLIP_BYTES = MAX_SOUND_BYTES;
 
 // ── built-in sounds ──────────────────────────────────────────────────────────
 const RATE = 48_000;
@@ -357,26 +358,8 @@ export async function renderBuiltin(id: string): Promise<AudioBuffer | null> {
   return normalise(await c.startRendering(), b.trim);
 }
 
-// ── the user's own sounds ────────────────────────────────────────────────────
-export interface CustomClip {
-  id: string;
-  name: string;
-  /** An emoji — or null when the icon is a picture (kept in IndexedDB). */
-  emoji: string | null;
-  image: boolean;
-}
-
-const LIST_KEY = "nova.soundboard";
+// ── your own and the servers’ sounds (kept on the server) ──────────────────
 const VOLUME_KEY = "nova.soundboard.volume";
-
-function readList(): CustomClip[] {
-  try {
-    const list = JSON.parse(localStorage.getItem(LIST_KEY) ?? "[]") as CustomClip[];
-    return Array.isArray(list) ? list.filter((c) => c && typeof c.id === "string" && typeof c.name === "string") : [];
-  } catch {
-    return [];
-  }
-}
 
 function readVolume(): number {
   try {
@@ -388,25 +371,13 @@ function readVolume(): number {
 }
 
 interface SoundboardState {
-  custom: CustomClip[];
   /** How many copies of each clip are sounding right now. */
   playing: Record<string, number>;
   /** 0–100, for what goes into the call and what you hear yourself. */
   volume: number;
-  /** Bumped when an icon picture changes. */
-  iconRev: number;
 }
 
-export const useSoundboard = create<SoundboardState>(() => ({ custom: readList(), playing: {}, volume: readVolume(), iconRev: 0 }));
-
-function saveList(custom: CustomClip[]) {
-  useSoundboard.setState({ custom });
-  try {
-    localStorage.setItem(LIST_KEY, JSON.stringify(custom));
-  } catch {
-    /* the list still works until the app is closed */
-  }
-}
+export const useSoundboard = create<SoundboardState>(() => ({ playing: {}, volume: readVolume() }));
 
 export function setSoundboardVolume(volume: number) {
   useSoundboard.setState({ volume });
@@ -417,9 +388,6 @@ export function setSoundboardVolume(volume: number) {
   }
 }
 
-const soundKey = (id: string) => `sound:${id}` as const;
-const iconKey = (id: string) => `soundicon:${id}` as const;
-
 /** Is this file a sound we can play, and short enough? */
 export async function checkClip(file: Blob): Promise<"ok" | "unreadable" | "too_long" | "too_big"> {
   if (file.size > MAX_CLIP_BYTES) return "too_big";
@@ -428,70 +396,27 @@ export async function checkClip(file: Blob): Promise<"ok" | "unreadable" | "too_
   return b.duration > MAX_CLIP_SECONDS ? "too_long" : "ok";
 }
 
-/** A picture cropped to a small square — all an icon needs. */
-async function squareIcon(file: Blob): Promise<Blob> {
-  const bmp = await createImageBitmap(file);
-  const side = Math.min(bmp.width, bmp.height);
-  const canvas = document.createElement("canvas");
-  canvas.width = canvas.height = ICON_PX;
-  canvas.getContext("2d")!.drawImage(bmp, (bmp.width - side) / 2, (bmp.height - side) / 2, side, side, 0, 0, ICON_PX, ICON_PX);
-  bmp.close();
-  return new Promise((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("icon"))), "image/webp", 0.9));
-}
-
-export interface ClipDraft {
-  name: string;
-  emoji: string | null;
-  /** A new sound file (required for a new clip). */
-  audio?: Blob;
-  /** A new icon picture; `null` removes the current one. */
-  picture?: Blob | null;
-}
-
-const buffers = new Map<string, Promise<AudioBuffer | null>>();
-
-/** Adds a sound (no `id`) or changes one. */
-export async function saveClip(draft: ClipDraft, id?: string): Promise<CustomClip> {
-  const list = useSoundboard.getState().custom;
-  const old = id ? list.find((c) => c.id === id) : undefined;
-  const clipId = old?.id ?? crypto.randomUUID();
-  if (draft.audio) {
-    await putAsset(soundKey(clipId), draft.audio);
-    buffers.delete(clipId);
-  }
-  let image = old?.image ?? false;
-  if (draft.picture) {
-    await putAsset(iconKey(clipId), await squareIcon(draft.picture));
-    image = true;
-  } else if (draft.picture === null && image) {
-    await deleteAsset(iconKey(clipId));
-    image = false;
-  }
-  const clip: CustomClip = { id: clipId, name: draft.name.trim().slice(0, 32) || t("soundboard.untitled"), emoji: image ? null : draft.emoji || "🔊", image };
-  saveList(old ? list.map((c) => (c.id === clipId ? clip : c)) : [...list, clip]);
-  useSoundboard.setState((s) => ({ iconRev: s.iconRev + 1 }));
-  return clip;
-}
-
-export async function deleteClip(id: string) {
-  saveList(useSoundboard.getState().custom.filter((c) => c.id !== id));
-  buffers.delete(id);
-  await Promise.all([deleteAsset(soundKey(id)), deleteAsset(iconKey(id))]).catch(() => {});
-}
-
-export const clipIcon = (id: string) => getAsset(iconKey(id));
+/** Decoded clips, keyed by id (and, for server sounds, by file: a replaced file is fetched again). */
+const buffers = new Map<string, { url: string; p: Promise<AudioBuffer | null> }>();
 
 function clipBuffer(id: string): Promise<AudioBuffer | null> {
-  let p = buffers.get(id);
-  if (!p) {
-    p = BUILTIN.some((b) => b.id === id)
+  const builtin = BUILTIN.some((b) => b.id === id);
+  const sound = builtin ? null : useExpressions.getState().sounds.find((x) => x.id === id);
+  if (!builtin && !sound) return Promise.resolve(null);
+  const url = sound?.url ?? id;
+  const hit = buffers.get(id);
+  if (hit && hit.url === url) return hit.p;
+  const p = (
+    builtin
       ? renderBuiltin(id)
-      : getAsset(soundKey(id)).then((blob) => (blob ? decodeAudio(blob).then((b) => (b ? normalise(b) : null)) : null));
-    p = p.catch(() => null);
-    buffers.set(id, p);
-    // A failure isn't remembered: the next click tries again.
-    void p.then((b) => !b && buffers.delete(id));
-  }
+      : fetch(mediaUrl(url)!)
+          .then((r) => (r.ok ? r.blob() : null))
+          .then((blob) => (blob ? decodeAudio(blob) : null))
+          .then((b) => (b ? normalise(b) : null))
+  ).catch(() => null);
+  buffers.set(id, { url, p });
+  // A failure isn’t remembered: the next click tries again.
+  void p.then((b) => !b && buffers.get(id)?.p === p && buffers.delete(id));
   return p;
 }
 

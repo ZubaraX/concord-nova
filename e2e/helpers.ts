@@ -143,6 +143,15 @@ function stubDesktopBridge() {
     onOverlayData: off,
     openExternal: noop,
     setAutoLaunch: noop,
+    // Screen-share audio from the Windows helper: tests drive it through window.__appAudio.
+    onAppAudio: (cb: unknown) => {
+      (window as unknown as { __appAudio: unknown }).__appAudio = cb;
+      return noop;
+    },
+    stopAppAudio: () => {
+      const w = window as unknown as { __appAudioStops?: number };
+      w.__appAudioStops = (w.__appAudioStops ?? 0) + 1;
+    },
   };
 }
 

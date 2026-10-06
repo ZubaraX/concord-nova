@@ -19,7 +19,9 @@ import type {
   RelationshipDTO,
   RoleDTO,
   SelfUserDTO,
+  SoundDTO,
   UserDTO,
+  VoicePresetDTO,
   VoiceStateDTO,
 } from "./types";
 
@@ -34,6 +36,11 @@ export interface DispatchMap {
   USER_UPDATE: UserDTO;
   SELF_UPDATE: SelfUserDTO;
   USER_SETTINGS_UPDATE: { settings: Record<string, unknown> };
+  /** A soundboard sound or a voice preset appeared or changed (yours, or one of a server you're in). */
+  SOUND_UPSERT: SoundDTO;
+  SOUND_DELETE: { id: string; guildId: string | null };
+  VOICE_PRESET_UPSERT: VoicePresetDTO;
+  VOICE_PRESET_DELETE: { id: string; guildId: string | null };
   /** Favourite GIFs changed on another device. */
   USER_GIFS_UPDATE: { added?: GifDTO; removed?: string };
   NOTIFICATION_SETTINGS_UPDATE: { settings: NotificationSettingDTO[] };

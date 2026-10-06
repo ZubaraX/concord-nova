@@ -207,7 +207,9 @@ export function MessageList({ channelId }: { channelId: string }) {
   const unreadCount = unreadIdx >= 0 ? items.length - unreadIdx : 0;
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col">
+    // A size container: pictures in messages measure themselves against the
+    // chat (cqw/cqh), not the window — the chat beside a call is narrow and short.
+    <div className="relative flex min-h-0 flex-1 flex-col [container-type:size]">
       {firstUnread && !marked && unreadCount > 0 && dividerAfter.current !== undefined && !atBottom && (
         <div className="absolute inset-x-4 top-2 z-10 flex items-center rounded-xl bg-bad/90 px-3 py-1.5 text-[13px] font-semibold text-white shadow-lift anim-pop">
           <button className="flex-1 text-left" onClick={() => virt.current?.scrollToIndex({ index: unreadIdx, align: "center" })}>

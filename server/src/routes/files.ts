@@ -114,7 +114,7 @@ export async function fileRoutes(app: FastifyInstance) {
   // ── profile / guild images (normalized WebP) ──
   app.post("/api/images", { preHandler: authenticate }, async (req) => {
     limits.uploads.consume(req.auth.userId);
-    const { kind } = parse(z.object({ kind: z.enum(["avatar", "banner", "icon", "guild_banner", "group_icon"]) }), req.query);
+    const { kind } = parse(z.object({ kind: z.enum(["avatar", "banner", "icon", "guild_banner", "group_icon", "sound_icon"]) }), req.query);
     const file = await req.file();
     if (!file) throw badRequest("no_file");
     const buf = await readLimited(file.file, 16 * 1024 * 1024);

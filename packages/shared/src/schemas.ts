@@ -249,6 +249,48 @@ export const favoriteGifSchema = z.object({
 });
 export const favoriteGifRemoveSchema = z.object({ url: z.string().max(2000) });
 export const MAX_FAVORITE_GIFS = 500;
+
+// ── soundboard sounds and voice presets ────────────────────────────────────
+export const MAX_OWN_SOUNDS = 48;
+export const MAX_GUILD_SOUNDS = 96;
+export const MAX_SOUND_BYTES = 8 * 1024 * 1024;
+export const MAX_OWN_PRESETS = 32;
+export const MAX_GUILD_PRESETS = 64;
+
+const zExpressionName = z.string().trim().min(1).max(32);
+/** An emoji as text (unicode, maybe with a skin tone or ZWJ sequence). */
+const zEmojiText = z.string().trim().min(1).max(32).nullable().optional();
+const zFilePath = z.string().max(500).regex(/^\/files\/[^\s?#]+$/, "invalid_url");
+
+export const soundCreateSchema = z.object({
+  name: zExpressionName,
+  emoji: zEmojiText,
+  image: zFilePath.nullable().optional(),
+  guildId: zId.optional(),
+});
+export const soundUpdateSchema = z.object({
+  name: zExpressionName.optional(),
+  emoji: zEmojiText,
+  image: zFilePath.nullable().optional(),
+});
+
+export const voiceParamsSchema = z.object({
+  pitch: z.number().min(-12).max(12),
+  robot: z.number().min(0).max(1),
+  robotHz: z.number().min(20).max(400),
+  drive: z.number().min(0).max(1),
+  lowpass: z.number().min(300).max(20_000),
+  highpass: z.number().min(20).max(3000),
+  echo: z.number().min(0).max(1),
+  echoMs: z.number().min(40).max(900),
+  reverb: z.number().min(0).max(1),
+  room: z.number().min(0.2).max(6),
+  tremolo: z.number().min(0).max(1),
+  tremoloHz: z.number().min(0.5).max(20),
+  trim: z.number().min(0.02).max(8),
+});
+export const voicePresetCreateSchema = z.object({ name: zExpressionName, emoji: zEmojiText, params: voiceParamsSchema, guildId: zId.optional() });
+export const voicePresetUpdateSchema = z.object({ name: zExpressionName.optional(), emoji: zEmojiText, params: voiceParamsSchema.optional() });
 export const adminFlagSchema = z.object({ value: z.boolean() });
 export const adminTransferSchema = z.object({ userId: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/) });
 

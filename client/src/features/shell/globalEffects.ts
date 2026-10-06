@@ -9,9 +9,10 @@ import { t } from "../../lib/i18n";
 import { clearPendingInvite, pendingInvite } from "../../lib/deeplink";
 import { channelTitle, data, isUnread, useData } from "../../store/data";
 import { navigate, ui, useUI } from "../../store/ui";
-import { settings, useSettings } from "../../store/settings";
+import { comboOf, globalShortcutMap, settings, useSettings } from "../../store/settings";
 import { joinVoice, toggleDeafen, toggleMute, useVoice } from "../voice/voice";
 import { stageFiles } from "../chat/composerFiles";
+import { installAppAudio } from "../voice/appAudio";
 
 let notificationsReady = false;
 const IDLE_MS = 10 * 60_000;
@@ -74,10 +75,11 @@ export function useGlobalEffects() {
       if (mod && e.key.toLowerCase() === "k") {
         e.preventDefault();
         useUI.setState({ switcher: !useUI.getState().switcher });
-      } else if (mod && e.shiftKey && e.code === "KeyM") {
+      } else if (!isDesktop && e.code && comboOf(e) === settings().keybinds.toggleMute) {
+        // (The desktop app gets these as global shortcuts.)
         e.preventDefault();
         toggleMute();
-      } else if (mod && e.shiftKey && e.code === "KeyD") {
+      } else if (!isDesktop && e.code && comboOf(e) === settings().keybinds.toggleDeafen) {
         e.preventDefault();
         toggleDeafen();
       } else if (e.altKey && (e.key === "ArrowUp" || e.key === "ArrowDown")) {
@@ -90,8 +92,9 @@ export function useGlobalEffects() {
 
     if (isDesktop) {
       const nova = window.nova!;
+      cleanups.push(installAppAudio(nova));
       cleanups.push(nova.onGlobalShortcut((a) => (a === "toggleMute" ? toggleMute() : a === "toggleDeafen" ? toggleDeafen() : undefined)));
-      nova.setGlobalShortcuts({ toggleMute: settings().keybinds.toggleMute ?? null, toggleDeafen: settings().keybinds.toggleDeafen ?? null });
+      nova.setGlobalShortcuts(globalShortcutMap());
       cleanups.push(
         nova.onActivity((game) => gw.presence({ activities: game ? [{ type: "playing", name: game, startedAt: Date.now() }] : [] }))
       );

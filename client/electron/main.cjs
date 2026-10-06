@@ -23,7 +23,7 @@ const {
 const path = require("node:path");
 const fs = require("node:fs");
 const { pathToFileURL } = require("node:url");
-const { execFile } = require("node:child_process");
+const { execFile, spawn } = require("node:child_process");
 const { autoUpdater } = require("electron-updater");
 
 const DEV_URL = process.env.VITE_DEV_SERVER_URL;
@@ -204,6 +204,79 @@ function createTray() {
   tray.on("click", () => (win?.isVisible() && win.isFocused() ? win.hide() : showWindow()));
 }
 
+// ── screen-share audio without Nova itself (Windows 10 2004+) ───────────────
+// Plain "loopback" records everything the PC plays — the call included, so
+// everybody heard themselves through the stream. native/loopback captures by
+// process instead: a whole screen gets all audio except Nova's process tree,
+// a window gets only the audio of the program that owns it. The PCM goes to
+// the renderer, which publishes it as the screen share's audio track.
+const LOOPBACK_EXE = app.isPackaged ? path.join(process.resourcesPath, "bin", "nova-loopback.exe") : path.join(__dirname, "..", "native", "bin", "nova-loopback.exe");
+let appAudio = null;
+
+function stopAppAudio() {
+  const cur = appAudio;
+  appAudio = null;
+  if (!cur) return;
+  try {
+    cur.proc.stdin.end();
+  } catch {
+    /* already gone */
+  }
+  setTimeout(() => cur.proc.kill(), 500);
+}
+
+/** Starts the helper for the picked source; true once it is streaming. */
+function startAppAudio(sourceId) {
+  stopAppAudio();
+  if (process.platform !== "win32" || !fs.existsSync(LOOPBACK_EXE)) return Promise.resolve(false);
+  const m = /^window:(\d+):/.exec(sourceId);
+  const args = m ? ["window", m[1]] : ["exclude", String(process.pid)];
+  return new Promise((resolve) => {
+    let proc;
+    try {
+      proc = spawn(LOOPBACK_EXE, args, { stdio: ["pipe", "pipe", "pipe"], windowsHide: true });
+    } catch {
+      return resolve(false);
+    }
+    const me = { proc };
+    appAudio = me;
+    let settled = false;
+    const settle = (ok) => {
+      if (settled) return;
+      settled = true;
+      if (!ok && appAudio === me) stopAppAudio();
+      resolve(ok);
+    };
+    let carry = Buffer.alloc(0);
+    proc.stderr.on("data", (d) => {
+      const text = String(d);
+      if (/^ready/m.test(text)) {
+        win?.webContents.send("appaudio", "start");
+        settle(true);
+      } else if (/^error/m.test(text)) {
+        console.warn("[nova-loopback]", text.trim());
+        settle(false);
+      }
+    });
+    proc.stdout.on("data", (chunk) => {
+      if (appAudio !== me) return;
+      const buf = carry.length ? Buffer.concat([carry, chunk]) : chunk;
+      const whole = buf.length - (buf.length % 4); // whole stereo 16-bit frames only
+      carry = Buffer.from(buf.subarray(whole));
+      if (whole) win?.webContents.send("appaudio", "pcm", buf.subarray(0, whole));
+    });
+    proc.on("error", () => settle(false));
+    proc.on("exit", () => {
+      settle(false);
+      if (appAudio === me) appAudio = null;
+      win?.webContents.send("appaudio", "end");
+    });
+    setTimeout(() => settle(false), 3000);
+  });
+}
+ipcMain.on("appaudio:stop", () => stopAppAudio());
+app.on("will-quit", () => stopAppAudio());
+
 // ── screen share ─────────────────────────────────────────────────────────────
 let pendingCapture = null;
 function wireDisplayMedia() {
@@ -231,6 +304,9 @@ ipcMain.on("screen:select", async (_e, id, withAudio) => {
   const sources = await desktopCapturer.getSources({ types: ["screen", "window"] });
   const src = sources.find((s) => s.id === id);
   if (!src) return pending.callback({});
+  // Windows: audio by process, without Nova itself (see startAppAudio). Older
+  // Windows or a missing helper: plain loopback, as before.
+  if (withAudio && (await startAppAudio(src.id))) return pending.callback({ video: src });
   // Loopback system audio is supported on Windows (and macOS 13+ with Electron's handler).
   pending.callback({ video: src, ...(withAudio && process.platform !== "linux" ? { audio: "loopback" } : {}) });
 });
@@ -270,20 +346,21 @@ const toAccelerator = (combo) =>
     .split("+")
     .map((p) => (p === "Ctrl" ? "CommandOrControl" : p === "Super" ? "Super" : p))
     .join("+");
+function toggleOverlayHidden() {
+  overlayHidden = !overlayHidden;
+  applyOverlay();
+}
 ipcMain.on("shortcuts", (_e, map) => {
   globalShortcut.unregisterAll();
-  for (const [action, combo] of Object.entries(map || {})) {
+  const all = { toggleOverlay: "Ctrl+Shift+Alt+O", ...(map || {}) }; // older app builds don't send the overlay one
+  for (const [action, combo] of Object.entries(all)) {
     if (!combo) continue;
     try {
-      globalShortcut.register(toAccelerator(combo), () => win?.webContents.send("shortcut", action));
+      globalShortcut.register(toAccelerator(combo), () => (action === "toggleOverlay" ? toggleOverlayHidden() : win?.webContents.send("shortcut", action)));
     } catch {
       /* invalid or taken accelerator */
     }
   }
-  globalShortcut.register("CommandOrControl+Shift+O", () => {
-    overlayHidden = !overlayHidden;
-    applyOverlay();
-  });
 });
 
 // ── overlay ("who's speaking", on top of games) ─────────────────────────────

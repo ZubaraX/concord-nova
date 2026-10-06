@@ -180,7 +180,7 @@ export async function convertHeicToJpeg(full: string): Promise<Buffer | null> {
   }
 }
 
-export type ImageKind = "avatar" | "banner" | "icon" | "guild_banner" | "emoji" | "group_icon";
+export type ImageKind = "avatar" | "banner" | "icon" | "guild_banner" | "emoji" | "group_icon" | "sound_icon";
 
 const KIND_SPEC: Record<ImageKind, { w: number; h: number; fit: "cover" | "contain"; maxInput: number }> = {
   avatar: { w: 256, h: 256, fit: "cover", maxInput: 10 * 1024 * 1024 },
@@ -189,6 +189,7 @@ const KIND_SPEC: Record<ImageKind, { w: number; h: number; fit: "cover" | "conta
   banner: { w: 1200, h: 480, fit: "cover", maxInput: 15 * 1024 * 1024 },
   guild_banner: { w: 1600, h: 640, fit: "cover", maxInput: 15 * 1024 * 1024 },
   emoji: { w: 128, h: 128, fit: "contain", maxInput: 2 * 1024 * 1024 },
+  sound_icon: { w: 96, h: 96, fit: "cover", maxInput: 8 * 1024 * 1024 },
 };
 
 export async function readLimited(stream: Readable, maxBytes: number): Promise<Buffer> {
