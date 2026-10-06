@@ -16,7 +16,7 @@
 //   --port <n>         SSH port (default 22)
 //   --dry-run          write the archive to the temp dir and print what would run
 import { spawn } from "node:child_process";
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -103,6 +103,14 @@ if (argv.includes("--no-migrate")) env.push("MIGRATE_OLD=0");
 if (opt("domain")) env.push(`DOMAIN=${q(opt("domain"))}`);
 if (opt("email")) env.push(`EMAIL=${q(opt("email"))}`);
 if (admin) env.push(`NOVA_ADMIN=${q(admin)}`);
+// The public half of the GitHub Actions deploy key, if this PC has one: setup.sh
+// lets that key (and only for deploying) update the server from then on.
+const ciKey = join(root, "deploy", "ci-deploy.pub");
+const shown = [...env];
+if (existsSync(ciKey)) {
+  env.push(`NOVA_DEPLOY_KEY=${q(readFileSync(ciKey, "utf8").trim())}`);
+  shown.push("+ ключ автообновления");
+}
 const remote = [
   "set -e",
   "rm -rf /root/nova-deploy && mkdir -p /root/nova-deploy",
@@ -121,7 +129,7 @@ if (argv.includes("--dry-run")) {
   console.log(`archive: ${out}\nssh ${sshArgs.map((a) => (/\s/.test(a) ? q(a) : a)).join(" ")}`);
   process.exit(0);
 }
-console.log(`▶ uploading to ${target} and running deploy/setup.sh${env.length ? ` (${env.join(" ")})` : ""}…\n`);
+console.log(`▶ uploading to ${target} and running deploy/setup.sh${shown.length ? ` (${shown.join(" ")})` : ""}…\n`);
 const ssh = spawn("ssh", sshArgs, { stdio: ["pipe", "inherit", "inherit"] });
 // If ssh gives up (wrong password, too slow to type it), it closes our pipe
 // mid-upload: not a crash — the exit code below explains it.

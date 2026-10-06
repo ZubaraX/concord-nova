@@ -23,7 +23,7 @@ export function serverInfo(): ServerInfoDTO {
     maxUploadBytes: config.MAX_UPLOAD_BYTES,
     maxMessageLength: config.MAX_MESSAGE_LENGTH,
     registration: instance.registration,
-    mail: mailEnabled,
+    mail: mailEnabled(),
     webBuild,
     downloads: { windows: config.DOWNLOAD_WINDOWS_URL || null, android: config.DOWNLOAD_ANDROID_URL || null },
   };

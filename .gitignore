@@ -32,3 +32,6 @@ client/android/
 
 # Native helper built by client/scripts/build-native.mjs
 client/native/bin/
+
+# Public half of the GitHub Actions deploy key (deploy-server.cmd installs it once)
+deploy/ci-deploy.pub

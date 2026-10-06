@@ -356,6 +356,8 @@ export interface AdminOverviewDTO {
   registration: RegistrationMode;
   /** KLIPY app key for GIF search ("" = search is off). */
   gifKey: string;
+  /** The SMTP account for password-reset mail (never its password). */
+  mail: { host: string; port: number; user: string; from: string; hasPassword: boolean } | null;
   users: number;
   usersDisabled: number;
   admins: number;

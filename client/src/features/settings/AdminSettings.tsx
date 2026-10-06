@@ -121,7 +121,118 @@ export function AdminOverview() {
         ))}
       </div>
       <InstanceSettings data={data} onChange={setData} />
+      <MailSettings data={data} onChange={setData} />
     </>
+  );
+}
+
+// ── password-reset mail ──────────────────────────────────────────────────────
+const MAIL_PROVIDERS = [
+  { id: "yandex", host: "smtp.yandex.ru", port: 465 },
+  { id: "gmail", host: "smtp.gmail.com", port: 465 },
+  { id: "mailru", host: "smtp.mail.ru", port: 465 },
+  { id: "other", host: "", port: 465 },
+] as const;
+type ProviderId = (typeof MAIL_PROVIDERS)[number]["id"];
+
+function MailSettings({ data, onChange }: { data: AdminOverviewDTO; onChange: (d: AdminOverviewDTO) => void }) {
+  const saved = data.mail ?? null;
+  const known = MAIL_PROVIDERS.find((p) => p.host && p.host === saved?.host);
+  const [provider, setProvider] = useState<ProviderId>(known?.id ?? (saved ? "other" : "yandex"));
+  const [host, setHost] = useState(saved?.host ?? "");
+  const [port, setPort] = useState(String(saved?.port ?? 465));
+  const [user, setUser] = useState(saved?.user ?? "");
+  const [pass, setPass] = useState("");
+  const [busy, setBusy] = useState<"save" | "test" | "off" | null>(null);
+  const preset = MAIL_PROVIDERS.find((p) => p.id === provider)!;
+  const realHost = provider === "other" ? host.trim() : preset.host;
+  const realPort = provider === "other" ? Number(port) || 465 : preset.port;
+  const canSave = !!realHost && !!user.trim() && (!!pass || !!saved?.hasPassword);
+
+  const save = async () => {
+    setBusy("save");
+    try {
+      const r = await api<{ mail: AdminOverviewDTO["mail"] }>("/api/admin/mail", { method: "PUT", body: { host: realHost, port: realPort, user: user.trim(), ...(pass ? { pass } : {}) } });
+      onChange({ ...data, mail: r.mail });
+      setPass("");
+      useData.setState((s) => (s.server ? { server: { ...s.server, mail: true } } : {}));
+      toast(t("admin.mailSaved"), "success");
+    } catch (e) {
+      toast(errorText(e), "error");
+    } finally {
+      setBusy(null);
+    }
+  };
+  const test = async () => {
+    setBusy("test");
+    try {
+      const r = await api<{ to: string }>("/api/admin/mail/test", { method: "POST" });
+      toast(t("admin.mailTestSent", { to: r.to }), "success");
+    } catch (e) {
+      const err = e as { code?: string; message?: string };
+      toast(err.code === "mail_failed" ? t("admin.mailTestFailed", { why: err.message ?? "" }) : errorText(e), "error");
+    } finally {
+      setBusy(null);
+    }
+  };
+  const off = async () => {
+    setBusy("off");
+    try {
+      await api("/api/admin/mail", { method: "DELETE" });
+      onChange({ ...data, mail: null });
+      useData.setState((s) => (s.server ? { server: { ...s.server, mail: false } } : {}));
+    } catch (e) {
+      toast(errorText(e), "error");
+    } finally {
+      setBusy(null);
+    }
+  };
+
+  return (
+    <Group title={t("admin.mail")}>
+      <div className="flex flex-col gap-3 py-3" data-mail-settings>
+        <div className="flex items-center gap-2 text-[14px]">
+          <Badge tone={saved ? "star" : "plain"}>{saved ? t("admin.gifOn") : t("admin.gifOff")}</Badge>
+          <span className="text-fg-3">{saved ? t("admin.mailFrom", { user: saved.user }) : t("admin.mailOffHint")}</span>
+        </div>
+        <p className="text-[13px] leading-snug text-fg-3">{t(`admin.mailHelp.${provider}`)}</p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <label className="flex flex-col gap-1.5 text-[13px] font-semibold text-fg-2">
+            {t("admin.mailProvider")}
+            <select value={provider} onChange={(e) => setProvider(e.target.value as ProviderId)} className="h-11 rounded-lg bg-canvas/70 px-3 font-normal outline-none ring-1 ring-line/10 focus:ring-star/60">
+              {MAIL_PROVIDERS.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {t(`admin.mailProviders.${p.id}`)}
+                </option>
+              ))}
+            </select>
+          </label>
+          {provider === "other" && (
+            <div className="flex gap-2">
+              <Input label={t("admin.mailHost")} value={host} placeholder="smtp.example.com" onChange={(e) => setHost(e.target.value)} />
+              <Input label={t("admin.mailPort")} value={port} inputMode="numeric" onChange={(e) => setPort(e.target.value.replace(/\D/g, ""))} className="w-24" />
+            </div>
+          )}
+          <Input label={t("admin.mailUser")} type="email" autoComplete="off" value={user} placeholder="nova@yandex.ru" onChange={(e) => setUser(e.target.value)} />
+          <Input label={t("admin.mailPass")} type="password" autoComplete="new-password" value={pass} placeholder={saved?.hasPassword ? t("admin.mailPassSaved") : ""} onChange={(e) => setPass(e.target.value)} />
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button loading={busy === "save"} disabled={!canSave} onClick={() => void save()}>
+            {t("common.save")}
+          </Button>
+          {saved && (
+            <>
+              <Button variant="secondary" loading={busy === "test"} onClick={() => void test()}>
+                {t("admin.mailTest")}
+              </Button>
+              <Button variant="ghost" loading={busy === "off"} onClick={() => void off()}>
+                {t("admin.gifTurnOff")}
+              </Button>
+            </>
+          )}
+        </div>
+      </div>
+    </Group>
   );
 }
 

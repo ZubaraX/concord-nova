@@ -11,7 +11,7 @@ import { hashPassword, verifyPassword } from "../lib/auth";
 import { cache } from "../state/cache";
 import { presence } from "../state/presence";
 import { voice } from "../state/voice";
-import { instance, setInstanceSettings } from "./instance";
+import { instance, mailOverview, setInstanceSettings } from "./instance";
 import { revokeSession } from "./users";
 import { setGuildOwner } from "./guilds";
 import { broadcastUserUpdate } from "./audience";
@@ -82,6 +82,7 @@ export async function overview(): Promise<AdminOverviewDTO> {
     serverName: instance.serverName,
     registration: instance.registration,
     gifKey: instance.gifKey,
+    mail: mailOverview(),
     users,
     usersDisabled,
     admins: Number(admins[0]?.n ?? 0),

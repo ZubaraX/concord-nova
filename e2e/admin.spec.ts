@@ -77,3 +77,40 @@ test("instance admin: accounts, server ownership and registration from the app",
     await a.context.close();
   }
 });
+
+test("password-reset mail: set up in the app; without it the sign-in screen says whom to ask", async ({ browser, request }) => {
+  test.skip(!!process.env.E2E_URL, "grants admin rights through the local database");
+  const admin = await register(request, `Почта ${run}`);
+  grantAdmin(admin);
+  await api(request, admin, "DELETE", "/api/admin/mail");
+
+  // Signed out: "Forgot password?" explains instead of promising a letter.
+  const anon = await openAs(browser, null, "/");
+  await anon.page.getByRole("button", { name: "Забыли пароль?" }).click();
+  await expect(anon.page.getByText(/не настроена почта/)).toBeVisible();
+  await expect(anon.page.getByRole("button", { name: "Отправить код" })).toHaveCount(0);
+
+  const a = await openAs(browser, admin);
+  const p = a.page;
+  try {
+    await p.getByRole("button", { name: "Настройки" }).last().click();
+    await p.locator("[data-settings] nav").getByRole("button", { name: "Обзор", exact: true }).click();
+    const box = p.locator("[data-mail-settings]");
+    await expect(box.getByText("Выключен")).toBeVisible();
+    await expect(box.getByText(/id\.yandex\.ru/)).toBeVisible(); // Yandex is the default, with its how-to
+    await box.getByLabel("Адрес ящика").fill("nova-test@yandex.ru");
+    await box.getByLabel("Пароль приложения").fill("app-password");
+    await box.getByRole("button", { name: "Сохранить" }).click();
+    await expect(box.getByText("Включён")).toBeVisible();
+    await expect(box.getByText(/nova-test@yandex\.ru/)).toBeVisible();
+    await expect(box.getByLabel("Пароль приложения")).toHaveAttribute("placeholder", /сохранён/);
+    expect((await (await request.get(`${BASE}/api/auth/info`)).json()).mail).toBe(true);
+    // Off again.
+    await box.getByRole("button", { name: "Выключить" }).click();
+    await expect(box.getByText("Выключен")).toBeVisible();
+    expect((await (await request.get(`${BASE}/api/auth/info`)).json()).mail).toBe(false);
+    noErrors(a, anon);
+  } finally {
+    await api(request, admin, "DELETE", "/api/admin/mail");
+  }
+});

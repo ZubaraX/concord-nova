@@ -238,6 +238,17 @@ export const instanceSettingsSchema = z.object({
   gifKey: z.string().trim().max(128).regex(/^[A-Za-z0-9_-]*$/, "invalid_key").optional(),
 });
 
+/** The SMTP account for password-reset mail. No `pass`: keep the saved one. */
+export const mailSettingsSchema = z
+  .object({
+    host: z.string().trim().min(1).max(200).regex(/^[A-Za-z0-9.-]+$/, "invalid_host"),
+    port: z.coerce.number().int().min(1).max(65535),
+    user: z.string().trim().min(1).max(200),
+    pass: z.string().min(1).max(500).optional(),
+    from: z.string().trim().max(200).optional(),
+  })
+;
+
 // ── favourite GIFs ─────────────────────────────────────────────────────────
 /** An absolute http(s) URL, or a file on this server. */
 const zGifUrl = z.string().max(2000).regex(/^(https?:\/\/[^\s/]+\/|\/files\/|\/media-proxy\?)\S*$/i, "invalid_url");

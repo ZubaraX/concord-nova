@@ -70,7 +70,7 @@ export function AuthScreen() {
                 ) : mode === "register" ? (
                   <RegisterForm setMode={setMode} info={info} invite={inviteFromUrl} />
                 ) : (
-                  <ForgotForm setMode={setMode} mode={mode} />
+                  <ForgotForm setMode={setMode} mode={mode} mail={info?.mail ?? true} />
                 )}
               </motion.div>
             </AnimatePresence>
@@ -256,7 +256,7 @@ function RegisterForm({ setMode, info, invite }: { setMode: (m: Mode) => void; i
   );
 }
 
-function ForgotForm({ setMode, mode }: { setMode: (m: Mode) => void; mode: Mode }) {
+function ForgotForm({ setMode, mode, mail }: { setMode: (m: Mode) => void; mode: Mode; mail: boolean }) {
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [password, setPassword] = useState("");
@@ -298,8 +298,8 @@ function ForgotForm({ setMode, mode }: { setMode: (m: Mode) => void; mode: Mode 
       <button type="button" onClick={() => setMode("login")} className="-mt-1 flex items-center gap-1 self-start text-[13px] text-fg-3 hover:text-fg">
         <ArrowLeft size={14} /> {t("common.back")}
       </button>
-      <Title title={t("auth.forgotTitle")} subtitle={t("auth.forgotSubtitle")} />
-      <Input label={t("auth.email")} type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus={mode === "forgot"} />
+      <Title title={t("auth.forgotTitle")} subtitle={mail ? t("auth.forgotSubtitle") : t("auth.noMail")} />
+      {!mail && mode === "forgot" ? null : <Input label={t("auth.email")} type="email" value={email} onChange={(e) => setEmail(e.target.value)} autoFocus={mode === "forgot"} />}
       {mode === "reset" && (
         <>
           <Input label={t("auth.code")} value={code} autoFocus onChange={(e) => setCode(e.target.value.toUpperCase())} className="font-mono tracking-[0.2em]" />
@@ -308,9 +308,11 @@ function ForgotForm({ setMode, mode }: { setMode: (m: Mode) => void; mode: Mode 
       )}
       {msg && <div className="rounded-xl bg-ok/12 px-3.5 py-2.5 text-[14px] text-ok ring-1 ring-ok/25">{msg}</div>}
       <FormError error={error} />
-      <Button type="submit" size="lg" block loading={busy}>
-        {mode === "forgot" ? t("auth.sendCode") : t("auth.resetPassword")}
-      </Button>
+      {(mail || mode === "reset") && (
+        <Button type="submit" size="lg" block loading={busy}>
+          {mode === "forgot" ? t("auth.sendCode") : t("auth.resetPassword")}
+        </Button>
+      )}
     </form>
   );
 }

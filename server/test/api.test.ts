@@ -651,6 +651,100 @@ describe("soundboard sounds and voice presets", () => {
   });
 });
 
+describe("password-reset mail", () => {
+  /** A minimal SMTP server that accepts everything and keeps the letters. */
+  async function fakeSmtp() {
+    const { createServer } = await import("node:net");
+    const letters: { to: string; data: string }[] = [];
+    let auth = "";
+    const server = createServer((sock) => {
+      let to = "";
+      let data = "";
+      let inData = false;
+      let buf = "";
+      sock.write("220 fake ESMTP\r\n");
+      sock.on("data", (chunk) => {
+        buf += chunk.toString("utf8");
+        let i: number;
+        while ((i = buf.indexOf("\r\n")) >= 0) {
+          const line = buf.slice(0, i);
+          buf = buf.slice(i + 2);
+          if (inData) {
+            if (line === ".") {
+              inData = false;
+              letters.push({ to, data });
+              sock.write("250 queued\r\n");
+            } else data += line + "\n";
+            continue;
+          }
+          const cmd = line.toUpperCase();
+          if (cmd.startsWith("EHLO")) sock.write("250-fake\r\n250 AUTH PLAIN LOGIN\r\n");
+          else if (cmd.startsWith("AUTH PLAIN")) {
+            auth = Buffer.from(line.split(" ")[2] ?? "", "base64").toString("utf8");
+            sock.write("235 ok\r\n");
+          } else if (cmd.startsWith("MAIL FROM")) sock.write("250 ok\r\n");
+          else if (cmd.startsWith("RCPT TO")) {
+            to = /<(.+)>/.exec(line)?.[1] ?? "";
+            sock.write("250 ok\r\n");
+          } else if (cmd === "DATA") {
+            inData = true;
+            data = "";
+            sock.write("354 go\r\n");
+          } else if (cmd === "QUIT") sock.end("221 bye\r\n");
+          else sock.write("250 ok\r\n");
+        }
+      });
+    });
+    await new Promise<void>((r) => server.listen(0, "127.0.0.1", r));
+    return { port: (server.address() as AddressInfo).port, letters, auth: () => auth, close: () => server.close() };
+  }
+
+  it("an admin sets the mail account in the app; a reset code arrives and works", async () => {
+    const smtp = await fakeSmtp();
+    try {
+      const nobody = await register("mailnobody");
+      expect((await api("PUT", "/api/admin/mail", nobody.token, { host: "127.0.0.1", port: smtp.port, user: "x" })).status).toBe(403);
+      const saved = await api("PUT", "/api/admin/mail", alice.token, { host: "127.0.0.1", port: smtp.port, user: "nova@example.com", pass: "app-secret" });
+      expect(saved.status, JSON.stringify(saved.body)).toBe(200);
+      expect(saved.body.mail).toEqual({ host: "127.0.0.1", port: smtp.port, user: "nova@example.com", from: "", hasPassword: true });
+      // The password is never sent back.
+      expect(JSON.stringify((await api("GET", "/api/admin/overview", alice.token)).body)).not.toContain("app-secret");
+      expect((await api("GET", "/api/auth/info")).body.mail).toBe(true);
+
+      const test = await api("POST", "/api/admin/mail/test", alice.token);
+      expect(test.status, JSON.stringify(test.body)).toBe(200);
+      expect(smtp.letters.at(-1)?.to).toBe(test.body.to);
+      expect(smtp.auth()).toContain("app-secret");
+
+      // Saving again without a password keeps it.
+      await api("PUT", "/api/admin/mail", alice.token, { host: "127.0.0.1", port: smtp.port, user: "nova@example.com", from: "Nova <nova@example.com>" });
+      expect((await api("GET", "/api/admin/overview", alice.token)).body.mail.hasPassword).toBe(true);
+
+      const kim = await register("kimreset");
+      expect((await api("POST", "/api/auth/forgot", null, { email: "kimreset@example.com" })).status).toBe(200);
+      await expect.poll(() => smtp.letters.find((l) => l.to === "kimreset@example.com")).toBeTruthy();
+      const letter = smtp.letters.find((l) => l.to === "kimreset@example.com")!;
+      const body = letter.data.includes("base64") ? Buffer.from(letter.data.split("\n\n").slice(1).join("").replace(/\s/g, ""), "base64").toString("utf8") : letter.data;
+      const code = /([0-9A-F]{8})/.exec(body)?.[1];
+      expect(code, body).toBeTruthy();
+      expect((await api("POST", "/api/auth/reset", null, { email: "kimreset@example.com", code, password: "brand-new-pass-1" })).status).toBe(200);
+      expect((await api("POST", "/api/auth/login", null, { login: "kimreset", password: "brand-new-pass-1" })).status).toBe(200);
+      expect((await api("GET", "/api/auth/me", kim.token)).status).toBe(401); // old sessions are out
+
+      // A wrong account is reported, not hidden.
+      await api("PUT", "/api/admin/mail", alice.token, { host: "127.0.0.1", port: 1, user: "nova@example.com", pass: "x" });
+      const failed = await api("POST", "/api/admin/mail/test", alice.token);
+      expect(failed.status).toBe(400);
+      expect(failed.body.error.code).toBe("mail_failed");
+      // Turned off again.
+      expect((await api("DELETE", "/api/admin/mail", alice.token)).body.mail).toBeNull();
+      expect((await api("GET", "/api/auth/info")).body.mail).toBe(false);
+    } finally {
+      smtp.close();
+    }
+  });
+});
+
 describe("apps and links", () => {
   // The desktop app (app://nova) and the Android WebView call the API cross-origin:
   // every method the client uses must pass the CORS preflight.

@@ -1,9 +1,12 @@
 // /api/admin — instance administration, for instance admins only.
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { adminFlagSchema, adminTransferSchema, instanceSettingsSchema } from "@nova/shared";
+import { adminFlagSchema, adminTransferSchema, instanceSettingsSchema, mailSettingsSchema } from "@nova/shared";
+import { prisma } from "../db";
+import { sendMailOrThrow } from "../lib/mail";
+import { instance, mailOverview, setMailSettings } from "../services/instance";
 import { authenticate } from "../lib/auth";
-import { forbidden, parse } from "../lib/errors";
+import { badRequest, forbidden, parse } from "../lib/errors";
 import * as admin from "../services/admin";
 
 const idParam = z.object({ id: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/) });
@@ -37,4 +40,24 @@ export async function adminRoutes(app: FastifyInstance) {
   });
 
   app.put("/settings", async (req) => admin.setInstanceSettings(parse(instanceSettingsSchema, req.body)));
+
+  // Password-reset mail: the account, and a test letter to the admin's own address.
+  app.put("/mail", async (req) => {
+    await setMailSettings(parse(mailSettingsSchema, req.body));
+    return { mail: mailOverview() };
+  });
+  app.delete("/mail", async () => {
+    await setMailSettings(null);
+    return { mail: null };
+  });
+  app.post("/mail/test", async (req) => {
+    const me = await prisma.user.findUnique({ where: { id: req.auth.userId }, select: { email: true } });
+    if (!me) throw badRequest("unknown_user");
+    try {
+      await sendMailOrThrow(me.email, `${instance.serverName} — проверка почты`, "Почта Concord Nova настроена: письма для сброса пароля будут приходить с этого адреса.");
+    } catch (e) {
+      throw badRequest("mail_failed", (e as Error).message.slice(0, 300));
+    }
+    return { ok: true, to: me.email };
+  });
 }

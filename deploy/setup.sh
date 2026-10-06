@@ -383,6 +383,43 @@ if [ -z "${KLIPY_KEY:-}" ] && [ "$GIF_SAVED" = 0 ]; then
   fi
 fi
 
+# ── automatic updates from GitHub Actions ───────────────────────────────────
+# push.mjs passes the public half of the CI deploy key (deploy/ci-deploy.pub on
+# the PC). It is installed with a forced command: that key can do one thing —
+# hand over a source archive and run its setup.sh — no shell, no forwarding.
+SSH_DIR="${SSH_DIR:-/root/.ssh}"
+CI_DEPLOY_BIN="${CI_DEPLOY_BIN:-/usr/local/bin/nova-ci-deploy}"
+if [ -n "${NOVA_DEPLOY_KEY:-}" ]; then
+  say "Automatic updates"
+  if [[ "$NOVA_DEPLOY_KEY" =~ ^ssh-ed25519\ [A-Za-z0-9+/=]+(\ [A-Za-z0-9._@-]*)?$ ]]; then
+    cat >"$CI_DEPLOY_BIN" <<'SH'
+#!/usr/bin/env bash
+# Forced command of the GitHub Actions deploy key (see deploy/setup.sh): takes a
+# source archive on stdin and runs its deploy/setup.sh. One update at a time.
+set -euo pipefail
+exec 9>/run/nova-ci-deploy.lock
+flock -w 1800 9
+rm -rf /root/nova-deploy && mkdir -p /root/nova-deploy
+tar -xzf - -C /root/nova-deploy
+bash /root/nova-deploy/deploy/setup.sh
+rm -rf /root/nova-deploy
+SH
+    chmod 755 "$CI_DEPLOY_BIN"
+    mkdir -p "$SSH_DIR" && chmod 700 "$SSH_DIR"
+    touch "$SSH_DIR/authorized_keys"
+    chmod 600 "$SSH_DIR/authorized_keys"
+    KEY_BODY=$(awk '{print $2}' <<<"$NOVA_DEPLOY_KEY")
+    # Replace an earlier copy of the same key, keep everything else.
+    grep -vF "$KEY_BODY" "$SSH_DIR/authorized_keys" >"$SSH_DIR/authorized_keys.new" || true
+    printf 'command="%s",restrict %s\n' "$CI_DEPLOY_BIN" "$NOVA_DEPLOY_KEY" >>"$SSH_DIR/authorized_keys.new"
+    mv "$SSH_DIR/authorized_keys.new" "$SSH_DIR/authorized_keys"
+    chmod 600 "$SSH_DIR/authorized_keys"
+    ok "GitHub Actions may now update this server (key …${KEY_BODY: -8}, deploy only)"
+  else
+    warn "NOVA_DEPLOY_KEY is not an ssh-ed25519 public key — automatic updates not set up"
+  fi
+fi
+
 # ── instance admin (push.mjs --admin <login>) ────────────────────────────────
 if [ -n "${NOVA_ADMIN:-}" ]; then
   say "Admin rights"

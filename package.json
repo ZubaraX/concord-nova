@@ -1,6 +1,6 @@
 {
   "name": "concord-nova",
-  "version": "1.5.1",
+  "version": "1.6.0",
   "private": true,
   "description": "Concord Nova — self-hosted Discord alternative: chat, voice, video, screen share. Desktop, Android, web.",
   "type": "module",
