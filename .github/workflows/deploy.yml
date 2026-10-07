@@ -1,14 +1,15 @@
 name: Deploy server
 
-# Push to main (server/client/shared changes) → the VPS is updated through
+# A release tag → the VPS is updated through
 # deploy/push.mjs → deploy/setup.sh (atomic swap, automatic rollback).
 # Secrets: DEPLOY_HOST (ip), DEPLOY_SSH_KEY (private key allowed for root).
 # Without them the job is skipped (deploy from your PC: `npm run deploy -- root@<ip>`).
+# Only releases (tags v*) update the server: a deploy rebuilds on the VPS, so
+# doing it for every commit on main disturbed calls far too often.
 on:
   workflow_dispatch:
   push:
-    branches: [main]
-    paths: ["server/**", "client/src/**", "packages/**", "deploy/**", "package-lock.json"]
+    tags: ["v*"]
 
 concurrency: deploy
 

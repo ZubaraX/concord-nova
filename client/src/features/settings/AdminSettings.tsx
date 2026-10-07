@@ -2,7 +2,7 @@
 // only to instance admins. Everything here goes through /api/admin.
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import clsx from "clsx";
-import { Ban, Check, CircleCheck, Clock, Copy, Crown, Database, KeyRound, MessageSquare, Mic, MoreHorizontal, Paperclip, Radio, Search, Server, ShieldCheck, ShieldOff, TriangleAlert, Users } from "lucide-react";
+import { Ban, Check, CircleCheck, Clock, Copy, Cpu, Crown, Database, MemoryStick, KeyRound, MessageSquare, Mic, MoreHorizontal, Paperclip, Radio, Search, Server, ShieldCheck, ShieldOff, TriangleAlert, Users } from "lucide-react";
 import { formatBytes, type AdminGuildDTO, type AdminOverviewDTO, type AdminUserDTO, type RegistrationMode } from "@nova/shared";
 import { api } from "../../lib/api";
 import { errorText, getLocale, t } from "../../lib/i18n";
@@ -95,7 +95,7 @@ export function AdminOverview() {
         {error ? <p className="text-[14px] text-bad">{error}</p> : <Spinner />}
       </>
     );
-  const cards: { icon: ReactNode; label: string; value: string; sub?: string }[] = [
+  const cards: { icon: ReactNode; label: string; value: string; sub?: string; warn?: boolean }[] = [
     { icon: <Users size={16} />, label: t("admin.statUsers"), value: num(data.users), sub: t("admin.statUsersSub", { admins: data.admins, disabled: data.usersDisabled }) },
     { icon: <Radio size={16} />, label: t("admin.statOnline"), value: num(data.connected) },
     { icon: <Mic size={16} />, label: t("admin.statVoice"), value: num(data.voice.participants), sub: t("admin.statVoiceSub", { rooms: data.voice.rooms, calls: data.voice.calls }) },
@@ -104,13 +104,31 @@ export function AdminOverview() {
     { icon: <Paperclip size={16} />, label: t("admin.statFiles"), value: bytes(data.storageBytes), sub: t("admin.statFilesSub", { n: data.attachments }) },
     { icon: <Database size={16} />, label: t("admin.statDatabase"), value: bytes(data.databaseBytes) },
     { icon: <Clock size={16} />, label: t("admin.statUptime"), value: uptime(data.uptimeSec), sub: `Nova ${data.version} · Node ${data.node.replace(/^v/, "")}` },
+    ...(data.host
+      ? [
+          {
+            icon: <Cpu size={16} />,
+            label: t("admin.statCpu"),
+            value: `${Math.round((data.host.load[0] / data.host.cpus) * 100)}%`,
+            sub: t("admin.statCpuSub", { cpus: data.host.cpus, load: data.host.load.join(" / ") }),
+            warn: data.host.load[0] / data.host.cpus > 0.85,
+          },
+          {
+            icon: <MemoryStick size={16} />,
+            label: t("admin.statMemory"),
+            value: `${bytes(String(Number(data.host.memTotal) - Number(data.host.memAvailable)))} / ${bytes(data.host.memTotal)}`,
+            sub: Number(data.host.swapTotal) ? t("admin.statSwap", { used: bytes(data.host.swapUsed), total: bytes(data.host.swapTotal) }) : undefined,
+            warn: Number(data.host.memAvailable) < Number(data.host.memTotal) * 0.1 || Number(data.host.swapUsed) > 256 * 1048576,
+          },
+        ]
+      : []),
   ];
   return (
     <>
       <SectionTitle sub={t("admin.overviewHint")}>{t("admin.overview")}</SectionTitle>
       <div className="mb-8 grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-4">
         {cards.map((c) => (
-          <div key={c.label} className="min-w-0 rounded-2xl bg-panel p-3.5 hairline">
+          <div key={c.label} className={clsx("min-w-0 rounded-2xl bg-panel p-3.5 hairline", c.warn && "ring-1 ring-warn/60")}>
             <div className="flex items-center gap-1.5 text-[12.5px] font-semibold text-fg-3">
               <span className="text-star">{c.icon}</span>
               <span className="truncate">{c.label}</span>

@@ -1,7 +1,8 @@
 // Instance administration: the owner of the Nova server manages accounts,
 // servers and instance settings from the app instead of over SSH.
 import { randomInt } from "node:crypto";
-import { statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
+import { cpus, freemem, loadavg, totalmem } from "node:os";
 import type { FastifyBaseLogger } from "fastify";
 import { UserFlags, type AdminGuildDTO, type AdminOverviewDTO, type AdminUserDTO } from "@nova/shared";
 import { prisma } from "../db";
@@ -94,6 +95,28 @@ export async function overview(): Promise<AdminOverviewDTO> {
     databaseBytes: String(dbPath ? fileSize(dbPath) + fileSize(`${dbPath}-wal`) : 0),
     connected: presence.connectedCount(),
     voice: voice.stats(),
+    host: hostStats(),
+  };
+}
+
+/** Load and memory of the VPS — when calls stutter, this shows whether the machine is the bottleneck. */
+function hostStats(): NonNullable<AdminOverviewDTO["host"]> {
+  const kb = (key: string, text: string) => Number(new RegExp(`^${key}:\\s+(\\d+)`, "m").exec(text)?.[1] ?? 0) * 1024;
+  let meminfo = "";
+  try {
+    meminfo = readFileSync("/proc/meminfo", "utf8");
+  } catch {
+    /* not Linux (development) */
+  }
+  const swapTotal = kb("SwapTotal", meminfo);
+  const [a, b, c] = loadavg();
+  return {
+    load: [a, b, c].map((x) => Math.round(x * 100) / 100) as [number, number, number],
+    cpus: cpus().length || 1,
+    memTotal: String(meminfo ? kb("MemTotal", meminfo) : totalmem()),
+    memAvailable: String(meminfo ? kb("MemAvailable", meminfo) : freemem()),
+    swapTotal: String(swapTotal),
+    swapUsed: String(Math.max(0, swapTotal - kb("SwapFree", meminfo))),
   };
 }
 

@@ -4,20 +4,20 @@
 // you're talking in.
 import { useEffect, useMemo, useRef, useState } from "react";
 import clsx from "clsx";
-import { ImagePlus, Megaphone, Pencil, Play, Plus, Square, Trash2, Upload } from "lucide-react";
+import { Copy, ImagePlus, Megaphone, Pencil, Play, Plus, Square, Trash2, Upload } from "lucide-react";
 import { MAX_GUILD_SOUNDS, MAX_OWN_SOUNDS, type SoundDTO } from "@nova/shared";
 import { errorText, t } from "../../lib/i18n";
 import { toast } from "../../lib/bus";
 import { decodeAudio, playBuffer } from "../../lib/sound";
 import { mediaUrl } from "../../lib/server";
-import { useData } from "../../store/data";
+import { data, useData } from "../../store/data";
 import { useUI } from "../../store/ui";
 import { settings, useSettings } from "../../store/settings";
 import { Button, Field, Input, Slider } from "../../components/ui/primitives";
-import { Modal, ModalFooter, ModalHeader, Popover, Tooltip, usePopover } from "../../components/ui/overlay";
+import { Modal, ModalFooter, ModalHeader, Popover, Tooltip, useContextMenu, useLongPress, usePopover, type MenuEntry } from "../../components/ui/overlay";
 import { EmojiPicker } from "../chat/EmojiPicker";
 import { BUILTIN_CLIPS, MAX_CLIP_SECONDS, checkClip, playClip, setSoundboardVolume, stopClips, useSoundboard } from "./clips";
-import { addSound, canEdit, editSound, removeSound, useExpressions } from "./expressions";
+import { addSound, canEdit, canReorder, copySound, editSound, removeSound, reorderSounds, sectionSounds, useExpressions } from "./expressions";
 import { useVoice } from "./voice";
 
 function ClipIcon({ emoji, picture, size = 28 }: { emoji: string | null; picture: string | null | undefined; size?: number }) {
@@ -74,14 +74,105 @@ function AddTile({ onClick }: { onClick: () => void }) {
   );
 }
 
-function SoundTile({ s, onEdit }: { s: SoundDTO; onEdit: (id: string) => void }) {
-  return <Tile id={s.id} name={s.name} emoji={s.emoji} picture={s.image ? mediaUrl(s.image, 96) : null} onEdit={canEdit(s) ? () => onEdit(s.id) : undefined} />;
+// ── drag and drop between "Mine" and a server ────────────────────────────────
+/** The sound being dragged (dataTransfer can't be read during dragover). */
+let dragged: SoundDTO | null = null;
+
+const sectionOf = (s: SoundDTO) => s.guildId ?? null;
+
+async function dropInto(target: string | null, beforeId: string | null) {
+  const s = dragged;
+  dragged = null;
+  if (!s) return;
+  try {
+    if (sectionOf(s) !== target) {
+      // Across sections: a copy (yours → the server, the server's → yours).
+      await copySound(s.id, target);
+      toast(target ? t("soundboard.copiedToServer", { name: s.name }) : t("soundboard.copiedToMine", { name: s.name }), "success");
+    } else if (canReorder(target) && beforeId !== s.id) {
+      const me = data().me?.id;
+      const list = sectionSounds(useExpressions.getState().sounds, (x) => (target ? x.guildId === target : !x.guildId && x.ownerId === me)).map((x) => x.id).filter((id) => id !== s.id);
+      const at = beforeId ? list.indexOf(beforeId) : -1;
+      list.splice(at < 0 ? list.length : at, 0, s.id);
+      await reorderSounds(target, list);
+    }
+  } catch (e) {
+    toast(errorText(e), "error");
+  }
 }
 
-function Section({ title, children, testId }: { title: string; children: React.ReactNode; testId?: string }) {
+/** Right-click / long-press: the same moves for people without a mouse to drag with. */
+function soundMenu(s: SoundDTO, servers: string[], onEdit: (id: string) => void): MenuEntry[] {
+  const guilds = data().guilds;
+  return [
+    s.guildId && { label: t("soundboard.copyToMine"), icon: <Copy size={15} />, onSelect: () => void copySound(s.id, null).then(() => toast(t("soundboard.copiedToMine", { name: s.name }), "success"), (e) => toast(errorText(e), "error")) },
+    ...servers
+      .filter((gid) => gid !== s.guildId && guilds[gid])
+      .map((gid) => ({
+        label: t("soundboard.copyToServer", { name: guilds[gid].name }),
+        icon: <Copy size={15} />,
+        onSelect: () => void copySound(s.id, gid).then(() => toast(t("soundboard.copiedToServer", { name: s.name }), "success"), (e) => toast(errorText(e), "error")),
+      })),
+    canEdit(s) && { separator: true },
+    canEdit(s) && { label: t("common.edit"), icon: <Pencil size={15} />, onSelect: () => onEdit(s.id) },
+  ];
+}
+
+function SoundTile({ s, servers, onEdit }: { s: SoundDTO; servers: string[]; onEdit: (id: string) => void }) {
+  const menu = useContextMenu();
+  const long = useLongPress((e) => menu(e, soundMenu(s, servers, onEdit)));
   return (
-    <section data-section={testId}>
-      <h4 className="mb-1.5 mt-3 truncate text-[12px] font-semibold uppercase tracking-wide text-fg-3">{title}</h4>
+    <div
+      draggable
+      onDragStart={(e) => {
+        dragged = s;
+        e.dataTransfer.effectAllowed = "copyMove";
+        e.dataTransfer.setData("text/plain", s.name);
+      }}
+      onDragEnd={() => (dragged = null)}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        menu(e, soundMenu(s, servers, onEdit));
+      }}
+      {...long}
+      data-sound={s.id}
+      className="cursor-grab active:cursor-grabbing"
+    >
+      <Tile id={s.id} name={s.name} emoji={s.emoji} picture={s.image ? mediaUrl(s.image, 96) : null} onEdit={canEdit(s) ? () => onEdit(s.id) : undefined} />
+    </div>
+  );
+}
+
+/** A section of tiles; `target` makes it a drop zone (null: your own sounds). */
+function Section({ title, children, testId, target }: { title: string; children: React.ReactNode; testId?: string; target?: string | null }) {
+  const [over, setOver] = useState(false);
+  const accepts = target !== undefined;
+  const copying = over && dragged && sectionOf(dragged) !== target;
+  return (
+    <section
+      data-section={testId}
+      onDragOver={(e) => {
+        if (!accepts || !dragged) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = sectionOf(dragged) !== target ? "copy" : "move";
+        if (!over) setOver(true);
+      }}
+      onDragLeave={(e) => {
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setOver(false);
+      }}
+      onDrop={(e) => {
+        if (!accepts) return;
+        e.preventDefault();
+        setOver(false);
+        const tile = (e.target as HTMLElement).closest("[data-sound]");
+        void dropInto(target ?? null, tile?.getAttribute("data-sound") ?? null);
+      }}
+      className={clsx("rounded-xl transition-colors", over && "bg-star/10 outline-dashed outline-2 outline-offset-2 outline-star/60")}
+    >
+      <h4 className="mb-1.5 mt-3 flex items-center gap-2 truncate text-[12px] font-semibold uppercase tracking-wide text-fg-3">
+        {title}
+        {copying && <span className="normal-case tracking-normal text-star">{t("soundboard.dropToCopy")}</span>}
+      </h4>
       <div className="grid grid-cols-4 gap-1.5">{children}</div>
     </section>
   );
@@ -102,9 +193,11 @@ export function SoundboardPanel({ onClose, embedded }: { onClose?: () => void; e
   const guilds = useData((s) => s.guilds);
   const sounds = useExpressions((s) => s.sounds);
   const supported = useExpressions((s) => s.supported);
-  const mine = sounds.filter((x) => !x.guildId && x.ownerId === me);
+  const mine = sectionSounds(sounds, (x) => !x.guildId && x.ownerId === me);
   // Settings: every server you're in that has sounds; a call: the server you're talking in.
-  const serverIds = embedded ? [...new Set(sounds.filter((x) => x.guildId && guilds[x.guildId]).map((x) => x.guildId!))] : callGuild ? [callGuild] : [];
+  // Settings: every server you're in (empty ones too, to drag your sounds onto); a call: the server you're talking in.
+  const serverIds = embedded ? Object.keys(guilds).sort((a, b) => guilds[a].name.localeCompare(guilds[b].name)) : callGuild ? [callGuild] : [];
+  const copyTargets = serverIds;
 
   const edit = (id?: string, guildId?: string | null) => {
     onClose?.();
@@ -139,18 +232,19 @@ export function SoundboardPanel({ onClose, embedded }: { onClose?: () => void; e
         </Section>
         {supported ? (
           <>
-            <Section title={t("soundboard.mine")} testId="mine">
+            {serverIds.length > 0 && <p className="mt-2 text-[11.5px] leading-snug text-fg-3">{t("soundboard.dragHint")}</p>}
+            <Section title={t("soundboard.mine")} testId="mine" target={null}>
               {mine.map((s) => (
-                <SoundTile key={s.id} s={s} onEdit={(id) => edit(id)} />
+                <SoundTile key={s.id} s={s} servers={copyTargets} onEdit={(id) => edit(id)} />
               ))}
               {mine.length < MAX_OWN_SOUNDS && <AddTile onClick={() => edit(undefined, null)} />}
             </Section>
             {serverIds.map((gid) => {
-              const list = sounds.filter((x) => x.guildId === gid);
+              const list = sectionSounds(sounds, (x) => x.guildId === gid);
               return (
-                <Section key={gid} title={t("soundboard.server", { name: guilds[gid]?.name ?? "…" })} testId={`guild:${gid}`}>
+                <Section key={gid} title={t("soundboard.server", { name: guilds[gid]?.name ?? "…" })} testId={`guild:${gid}`} target={gid}>
                   {list.map((s) => (
-                    <SoundTile key={s.id} s={s} onEdit={(id) => edit(id)} />
+                    <SoundTile key={s.id} s={s} servers={copyTargets} onEdit={(id) => edit(id)} />
                   ))}
                   {list.length < MAX_GUILD_SOUNDS && <AddTile onClick={() => edit(undefined, gid)} />}
                 </Section>

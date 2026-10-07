@@ -285,6 +285,11 @@ export const soundUpdateSchema = z.object({
   image: zFilePath.nullable().optional(),
 });
 
+/** Copy a sound to your own (guildId null) or to a server you're in. */
+export const soundCopySchema = z.object({ guildId: zId.nullable() });
+/** A section's new order: all of its sound ids, first to last. */
+export const soundOrderSchema = z.object({ guildId: zId.nullable(), ids: z.array(zId).max(200) });
+
 export const voiceParamsSchema = z.object({
   pitch: z.number().min(-12).max(12),
   robot: z.number().min(0).max(1),

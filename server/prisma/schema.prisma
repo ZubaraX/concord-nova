@@ -410,6 +410,8 @@ model Sound {
   image     String?
   /// Audio file, relative to the storage dir
   path      String
+  /// Place in its section (yours or the server's), dragged in the soundboard.
+  position  Int      @default(0)
   createdAt DateTime @default(now())
   owner     User     @relation(fields: [ownerId], references: [id], onDelete: Cascade)
   guild     Guild?   @relation(fields: [guildId], references: [id], onDelete: Cascade)

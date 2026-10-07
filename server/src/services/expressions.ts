@@ -19,6 +19,7 @@ interface SoundRow {
   emoji: string | null;
   image: string | null;
   path: string;
+  position: number;
   createdAt: Date;
 }
 interface PresetRow {
@@ -31,7 +32,7 @@ interface PresetRow {
   createdAt: Date;
 }
 
-const toSound = (r: SoundRow): SoundDTO => ({ id: r.id, ownerId: r.ownerId, guildId: r.guildId, name: r.name, emoji: r.emoji, image: r.image, url: publicUrl(r.path), createdAt: r.createdAt.toISOString() });
+const toSound = (r: SoundRow): SoundDTO => ({ id: r.id, ownerId: r.ownerId, guildId: r.guildId, name: r.name, emoji: r.emoji, image: r.image, url: publicUrl(r.path), position: r.position, createdAt: r.createdAt.toISOString() });
 const toPreset = (r: PresetRow): VoicePresetDTO => ({ id: r.id, ownerId: r.ownerId, guildId: r.guildId, name: r.name, emoji: r.emoji, params: jsonParse<VoiceParams>(r.params, {} as VoiceParams), createdAt: r.createdAt.toISOString() });
 
 /** Who hears about a change: the server's members, or just the owner. */
@@ -54,7 +55,7 @@ function requireEditor(userId: string, row: { ownerId: string; guildId: string |
 export async function listExpressions(userId: string): Promise<ExpressionsDTO> {
   const guilds = cache.userGuildIds(userId);
   const where = { OR: [{ ownerId: userId, guildId: null }, ...(guilds.length ? [{ guildId: { in: guilds } }] : [])] };
-  const [sounds, presets] = await Promise.all([prisma.sound.findMany({ where, orderBy: { createdAt: "asc" } }), prisma.voicePreset.findMany({ where, orderBy: { createdAt: "asc" } })]);
+  const [sounds, presets] = await Promise.all([prisma.sound.findMany({ where, orderBy: [{ position: "asc" }, { createdAt: "asc" }] }), prisma.voicePreset.findMany({ where, orderBy: { createdAt: "asc" } })]);
   return { sounds: sounds.map(toSound), presets: presets.map(toPreset) };
 }
 
@@ -86,7 +87,7 @@ export async function createSound(userId: string, file: Readable & { truncated?:
   await rename(resolveStorage(rel), resolveStorage(named));
   rel = named;
   const row = await prisma.sound.create({
-    data: { id: ulid(), ownerId: userId, guildId: meta.guildId ?? null, name: meta.name, emoji: meta.image ? null : (meta.emoji ?? null), image: meta.image ?? null, path: rel },
+    data: { id: ulid(), ownerId: userId, guildId: meta.guildId ?? null, name: meta.name, emoji: meta.image ? null : (meta.emoji ?? null), image: meta.image ?? null, path: rel, position: await nextPosition(userId, meta.guildId ?? null) },
   });
   const dto = toSound(row);
   announce(row, "SOUND_UPSERT", dto);
@@ -116,6 +117,72 @@ export async function deleteSound(userId: string, id: string) {
   announce(row, "SOUND_DELETE", { id, guildId: row.guildId });
   await deleteStored(row.path);
   if (row.image) await removeImage(row.image);
+}
+
+/** New sounds go to the end of their section. */
+async function nextPosition(userId: string, guildId: string | null): Promise<number> {
+  const last = await prisma.sound.aggregate({ where: guildId ? { guildId } : { ownerId: userId, guildId: null }, _max: { position: true } });
+  return (last._max.position ?? -1) + 1;
+}
+
+/** Can this user see (and so copy) the sound? Their own, or one of a server they're in. */
+function canSee(userId: string, row: { ownerId: string; guildId: string | null }) {
+  return row.guildId ? cache.isMember(row.guildId, userId) : row.ownerId === userId;
+}
+
+/** A second, independent copy of a stored file (the copy outlives the original). */
+async function duplicateStored(rel: string): Promise<string> {
+  const { copyFile, mkdir } = await import("node:fs/promises");
+  const { dirname } = await import("node:path");
+  const next = newRelPath(rel.split("/").pop() ?? "file");
+  await mkdir(dirname(resolveStorage(next)), { recursive: true });
+  await copyFile(resolveStorage(rel), resolveStorage(next));
+  return next;
+}
+
+/**
+ * Copies a sound — a server's into your own, or yours onto a server you're in
+ * (the soundboard's drag and drop). File and icon are copied too, so deleting
+ * one copy never breaks the other.
+ */
+export async function copySound(userId: string, id: string, guildId: string | null): Promise<SoundDTO> {
+  const row = await prisma.sound.findUnique({ where: { id } });
+  if (!row || !canSee(userId, row)) throw notFound("unknown_sound");
+  requireShareable(userId, guildId ?? undefined);
+  if ((await countSounds(userId, guildId ?? undefined)) >= (guildId ? MAX_GUILD_SOUNDS : MAX_OWN_SOUNDS)) throw badRequest("sound_limit");
+  const path = await duplicateStored(row.path);
+  let image: string | null = null;
+  if (row.image?.startsWith("/files/")) {
+    const rel = row.image.slice("/files/".length).split("/").map(decodeURIComponent).join("/");
+    image = await duplicateStored(rel).then(publicUrl, () => null);
+  }
+  const copy = await prisma.sound.create({
+    data: { id: ulid(), ownerId: userId, guildId, name: row.name, emoji: image ? null : (row.emoji ?? (row.image ? "🔊" : null)), image, path, position: await nextPosition(userId, guildId) },
+  });
+  const dto = toSound(copy);
+  announce(copy, "SOUND_UPSERT", dto);
+  return dto;
+}
+
+/** A section's new order. Yours: you; a server's: whoever may manage its emoji. */
+export async function reorderSounds(userId: string, guildId: string | null, ids: string[]): Promise<SoundDTO[]> {
+  if (guildId) {
+    if (!cache.isMember(guildId, userId)) throw notFound("unknown_guild");
+    if (!cache.hasGuildPerm(guildId, userId, Permission.MANAGE_EMOJIS)) throw forbidden("missing_permissions");
+  }
+  const rows = await prisma.sound.findMany({ where: guildId ? { guildId } : { ownerId: userId, guildId: null } });
+  const known = new Map(rows.map((r) => [r.id, r]));
+  // Ids from elsewhere are ignored; sounds missing from the list keep their relative order after it.
+  const ordered = [...ids.filter((id) => known.has(id)), ...rows.filter((r) => !ids.includes(r.id)).sort((a, b) => a.position - b.position).map((r) => r.id)];
+  const out: SoundDTO[] = [];
+  for (const [position, id] of ordered.entries()) {
+    const r = known.get(id)!;
+    const row = r.position === position ? r : await prisma.sound.update({ where: { id }, data: { position } });
+    const dto = toSound(row);
+    if (r.position !== position) announce(row, "SOUND_UPSERT", dto);
+    out.push(dto);
+  }
+  return out;
 }
 
 /** An icon uploaded through /api/images lives in its own ULID folder. */

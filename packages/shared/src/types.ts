@@ -370,6 +370,8 @@ export interface AdminOverviewDTO {
   databaseBytes: string;
   connected: number;
   voice: { participants: number; rooms: number; calls: number };
+  /** The machine itself: load average (1/5/15 min), CPU count, memory and swap in bytes (as strings). */
+  host?: { load: [number, number, number]; cpus: number; memTotal: string; memAvailable: string; swapTotal: string; swapUsed: string };
 }
 
 export interface AdminUserDTO {
@@ -452,6 +454,8 @@ export interface SoundDTO {
   image: string | null;
   /** The audio file (/files/…). */
   url: string;
+  /** Order within its section (yours, or the server's). */
+  position: number;
   createdAt: string;
 }
 

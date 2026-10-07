@@ -2,7 +2,7 @@
 // personal or shared with a server.
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { MAX_SOUND_BYTES, soundCreateSchema, soundUpdateSchema, voicePresetCreateSchema, voicePresetUpdateSchema, zId } from "@nova/shared";
+import { MAX_SOUND_BYTES, soundCopySchema, soundCreateSchema, soundOrderSchema, soundUpdateSchema, voicePresetCreateSchema, voicePresetUpdateSchema, zId } from "@nova/shared";
 import { authenticate } from "../lib/auth";
 import { badRequest, parse } from "../lib/errors";
 import { limits } from "../lib/rate";
@@ -23,6 +23,11 @@ export async function expressionRoutes(app: FastifyInstance) {
     const file = await req.file({ limits: { fileSize: MAX_SOUND_BYTES } });
     if (!file) throw badRequest("no_file");
     return reply.code(201).send(await ex.createSound(req.auth.userId, file.file, meta));
+  });
+  app.post("/api/sounds/:id/copy", async (req, reply) => reply.code(201).send(await ex.copySound(req.auth.userId, parse(idParam, req.params).id, parse(soundCopySchema, req.body).guildId)));
+  app.put("/api/sounds/order", async (req) => {
+    const { guildId, ids } = parse(soundOrderSchema, req.body);
+    return ex.reorderSounds(req.auth.userId, guildId, ids);
   });
   app.patch("/api/sounds/:id", async (req) => ex.updateSound(req.auth.userId, parse(idParam, req.params).id, parse(soundUpdateSchema, req.body)));
   app.delete("/api/sounds/:id", async (req, reply) => {

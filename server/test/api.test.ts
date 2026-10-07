@@ -639,6 +639,34 @@ describe("soundboard sounds and voice presets", () => {
     expect((await api("DELETE", `/api/sounds/${mine.body.id}`, owner.token)).status).toBe(403);
     expect((await api("DELETE", `/api/sounds/${mine.body.id}`, member.token)).status).toBe(204);
 
+    // Copy between yours and the server's (the soundboard's drag and drop): an independent copy.
+    const again = await upload(member, wav(), "audio/wav", { name: "Ещё один", emoji: "🎺" });
+    const toServer = await api("POST", `/api/sounds/${again.body.id}/copy`, member.token, { guildId: g.id });
+    expect(toServer.status, JSON.stringify(toServer.body)).toBe(201);
+    expect(toServer.body).toMatchObject({ name: "Ещё один", emoji: "🎺", guildId: g.id, ownerId: member.id });
+    expect(toServer.body.url).not.toBe(again.body.url);
+    await ownerLive.waitFor("SOUND_UPSERT", (s) => s.id === toServer.body.id);
+    // The server owner takes the server's copy into their own sounds…
+    const mineNow = await api("POST", `/api/sounds/${toServer.body.id}/copy`, owner.token, { guildId: null });
+    expect(mineNow.body).toMatchObject({ guildId: null, ownerId: owner.id, name: "Ещё один" });
+    // …and it survives the original going away.
+    expect((await api("DELETE", `/api/sounds/${toServer.body.id}`, owner.token)).status).toBe(204);
+    expect((await fetch(base + mineNow.body.url)).status).toBe(200);
+    // A stranger can neither see nor copy someone's own sound, nor copy onto a server they're not in.
+    expect((await api("POST", `/api/sounds/${again.body.id}/copy`, stranger.token, { guildId: null })).status).toBe(404);
+    expect((await api("POST", `/api/sounds/${mineNow.body.id}/copy`, owner.token, { guildId: "01ARZ3NDEKTSV4RRFFQ69G5FAV" })).status).toBe(404);
+
+    // Order: yours, as dragged; new ones go to the end.
+    const third = await upload(member, wav(), "audio/wav", { name: "Третий" });
+    const list = async () => (await api("GET", "/api/expressions", member.token)).body.sounds.filter((s: { guildId: string | null }) => !s.guildId).map((s: { name: string }) => s.name);
+    expect(await list()).toEqual(["Ещё один", "Третий"]);
+    const order = await api("PUT", "/api/sounds/order", member.token, { guildId: null, ids: [third.body.id, again.body.id] });
+    expect(order.status).toBe(200);
+    expect(await list()).toEqual(["Третий", "Ещё один"]);
+    // A server's order is for its emoji managers.
+    expect((await api("PUT", "/api/sounds/order", member.token, { guildId: g.id, ids: [] })).status).toBe(403);
+    expect((await api("PUT", "/api/sounds/order", owner.token, { guildId: g.id, ids: [] })).status).toBe(200);
+
     // Voice presets: same rules, parameters are range-checked.
     const preset = await api("POST", "/api/voice-presets", member.token, { name: "Мой бас", emoji: "🗿", params, guildId: g.id });
     expect(preset.status, JSON.stringify(preset.body)).toBe(201);

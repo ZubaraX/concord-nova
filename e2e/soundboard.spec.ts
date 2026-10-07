@@ -189,3 +189,51 @@ test("soundboard: every built-in sound renders audibly and without clipping", as
   console.log(stats.map((s) => `${s.id.padEnd(9)} ${s.seconds.toFixed(2)}s peak ${s.peak.toFixed(2)} rms ${s.rms.toFixed(3)} tail ${s.tail.toFixed(3)}`).join("\n"));
   noErrors(a);
 });
+
+test("soundboard: drag a sound of yours onto the server and a server's into yours; drag to reorder", async ({ browser, request }) => {
+  const alice = await register(request, "Алиса");
+  const bob = await register(request, "Боб");
+  const { guild } = await guildWith(request, alice, [bob]);
+  // Two sounds of Bob's own, one of the server's (added by Alice).
+  const add = async (who: typeof alice, name: string, guildId?: string) => {
+    const res = await request.post(`${BASE}/api/sounds?${new URLSearchParams({ name, emoji: "🔊", ...(guildId ? { guildId } : {}) })}`, {
+      headers: { authorization: `Bearer ${who.access}` },
+      multipart: { file: { name: `${name}.wav`, mimeType: "audio/wav", buffer: wav(0.5) } },
+    });
+    expect(res.status(), await res.text()).toBe(201);
+  };
+  await add(bob, "первый");
+  await add(bob, "второй");
+  await add(alice, "серверный", guild.id);
+
+  const b = await openAs(browser, bob);
+  const p = b.page;
+  await p.getByRole("button", { name: "Настройки" }).last().click();
+  await p.locator("[data-settings] nav").getByRole("button", { name: "Голос и видео", exact: true }).click();
+  const mine = p.locator('[data-soundboard] [data-section="mine"]');
+  const server = p.locator(`[data-soundboard] [data-section="guild:${guild.id}"]`);
+  const names = (section: typeof mine) => section.locator("[data-sound]").allInnerTexts();
+  await expect(server.locator("[data-sound]")).toHaveCount(1);
+
+  // Yours → the server: a copy appears there for everyone.
+  await mine.locator("[data-sound]").filter({ hasText: "первый" }).dragTo(server);
+  await expect(server.locator("[data-sound]").filter({ hasText: "первый" })).toBeVisible();
+  await expect(mine.locator("[data-sound]").filter({ hasText: "первый" })).toBeVisible(); // still yours too
+
+  // The server's → yours.
+  await server.locator("[data-sound]").filter({ hasText: "серверный" }).dragTo(mine);
+  await expect(mine.locator("[data-sound]").filter({ hasText: "серверный" })).toBeVisible();
+  expect((await names(mine)).map((s) => s.trim().split("\n").pop())).toEqual(["первый", "второй", "серверный"]);
+
+  // Reorder yours: drop "серверный" onto "первый" → it goes first, and stays so on another device.
+  await mine.locator("[data-sound]").filter({ hasText: "серверный" }).dragTo(mine.locator("[data-sound]").filter({ hasText: "первый" }));
+  await expect.poll(async () => (await names(mine)).map((s) => s.trim().split("\n").pop())).toEqual(["серверный", "первый", "второй"]);
+  const list = await (await request.get(`${BASE}/api/expressions`, { headers: { authorization: `Bearer ${bob.access}` } })).json();
+  expect(list.sounds.filter((s: { guildId: string | null }) => !s.guildId).sort((a: { position: number }, c: { position: number }) => a.position - c.position).map((s: { name: string }) => s.name)).toEqual(["серверный", "первый", "второй"]);
+
+  // The menu does the same without dragging.
+  await mine.locator("[data-sound]").filter({ hasText: "второй" }).click({ button: "right" });
+  await p.getByRole("menuitem", { name: /Копировать на сервер/ }).first().click();
+  await expect(server.locator("[data-sound]").filter({ hasText: "второй" })).toBeVisible();
+  noErrors(b);
+});

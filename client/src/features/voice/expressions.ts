@@ -91,6 +91,35 @@ export async function editSound(id: string, draft: SoundDraft): Promise<SoundDTO
   return sound;
 }
 
+/** Copies a sound into your own (guildId null) or onto a server — the soundboard's drag and drop. */
+export async function copySound(id: string, guildId: string | null): Promise<SoundDTO> {
+  const sound = await api<SoundDTO>(`/api/sounds/${id}/copy`, { method: "POST", body: { guildId } });
+  set({ sounds: upsert(useExpressions.getState().sounds, sound) });
+  return sound;
+}
+
+/** A section's new order (all its ids, first to last). Shown at once; the server confirms. */
+export async function reorderSounds(guildId: string | null, ids: string[]) {
+  const before = useExpressions.getState().sounds;
+  set({ sounds: before.map((s) => (ids.includes(s.id) ? { ...s, position: ids.indexOf(s.id) } : s)) });
+  try {
+    await api("/api/sounds/order", { method: "PUT", body: { guildId, ids } });
+  } catch (e) {
+    set({ sounds: before });
+    throw e;
+  }
+}
+
+/** Sounds of one section in their order. */
+export const sectionSounds = (sounds: SoundDTO[], filter: (s: SoundDTO) => boolean) =>
+  sounds.filter(filter).sort((a, b) => (a.position ?? 0) - (b.position ?? 0) || a.createdAt.localeCompare(b.createdAt));
+
+/** May this user change the order of a section? Yours: yes; a server's: its emoji managers. */
+export function canReorder(guildId: string | null): boolean {
+  if (!guildId) return true;
+  return can(guildPerms(data(), guildId), Permission.MANAGE_EMOJIS);
+}
+
 export async function removeSound(id: string) {
   await api(`/api/sounds/${id}`, { method: "DELETE" });
   set({ sounds: useExpressions.getState().sounds.filter((x) => x.id !== id) });

@@ -265,9 +265,13 @@ cd "$APP_DIR.new"
 export ELECTRON_SKIP_BINARY_DOWNLOAD=1 CHECKPOINT_DISABLE=1 PRISMA_HIDE_UPDATE_MESSAGE=1
 # --include=dev: NODE_ENV=production (from nova.env) would otherwise skip the
 # build tools (esbuild, vite, tsx) that the build and the Concord import need.
-npm ci --include=dev --no-audit --no-fund --loglevel=error
+# Lowest CPU and disk priority: on a small VPS a full build next to running
+# calls used to starve LiveKit — voices crackled and dropped while it ran.
+LOW="nice -n 19"
+command -v ionice >/dev/null && LOW="$LOW ionice -c 3"
+$LOW npm ci --include=dev --no-audit --no-fund --loglevel=error
 # Same-origin web build: no VITE_API_URL, the page talks to the server that serves it.
-env -u VITE_API_URL npm run build >/tmp/nova-build.log 2>&1 || { tail -40 /tmp/nova-build.log; die "build failed — the live version keeps running"; }
+env -u VITE_API_URL $LOW npm run build >/tmp/nova-build.log 2>&1 || { tail -40 /tmp/nova-build.log; die "build failed — the live version keeps running"; }
 ok "built $(node -p 'require("./package.json").version')"
 
 # ── database: backup, then schema migrations ─────────────────────────────────
@@ -455,6 +459,11 @@ systemctl enable -q nginx && systemctl reload nginx
 
 # ── LiveKit ──────────────────────────────────────────────────────────────────
 say "LiveKit"
+# Restarting LiveKit ends every call in progress, so it only happens when its
+# binary, config, unit or TURN certificate actually changed (an app update
+# leaves calls alone; the voice server just keeps running).
+lk_state() { cat "$(command -v livekit-server)" /etc/livekit/livekit.yaml /etc/systemd/system/livekit.service /etc/livekit/turn.crt 2>/dev/null | sha256sum | cut -d' ' -f1; }
+LK_BEFORE=$(lk_state)
 TURN_TLS=""
 if [ -d "/etc/letsencrypt/live/$DOMAIN" ]; then
   install -o livekit -g livekit -m 600 "/etc/letsencrypt/live/$DOMAIN/fullchain.pem" /etc/livekit/turn.crt
@@ -579,7 +588,12 @@ WantedBy=timers.target
 UNIT
 systemctl daemon-reload
 systemctl enable -q livekit nova nova-backup.timer
-systemctl restart livekit
+if [ "$(lk_state)" != "$LK_BEFORE" ] || ! systemctl is-active -q livekit; then
+  systemctl restart livekit
+  ok "livekit restarted (its setup changed)"
+else
+  ok "livekit untouched — calls in progress carry on"
+fi
 systemctl start nova-backup.timer
 
 # ── swap in the new version, roll back if it doesn't come up ─────────────────
