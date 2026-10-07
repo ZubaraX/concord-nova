@@ -30,7 +30,7 @@ import { gw } from "../../lib/gateway";
 import { errorText, t } from "../../lib/i18n";
 import { voiceUrl } from "../../lib/server";
 import { isAndroid, isDesktop } from "../../lib/platform";
-import { playSound } from "../../lib/sound";
+import { playSound, setInCallProbe } from "../../lib/sound";
 import { data } from "../../store/data";
 import { settings, useSettings } from "../../store/settings";
 import { MicProcessor } from "./processor";
@@ -89,9 +89,15 @@ export const useVoice = create<VoiceStore>(() => ({
 }));
 
 const V = () => useVoice.getState();
+setInCallProbe(() => useVoice.getState().state === "connected");
 const setV = (p: Partial<VoiceStore>) => useVoice.setState(p);
 
 let room: Room | null = null;
+let playback: AudioContext | null = null;
+function playbackContext(): AudioContext {
+  if (!playback || playback.state === "closed") playback = new AudioContext({ latencyHint: "balanced" });
+  return playback;
+}
 let mic: MicProcessor | null = null;
 let intentional = false;
 let rejoinTries = 0;
@@ -518,7 +524,10 @@ export async function joinVoice(channelId: string, isRejoin = false) {
   const r = new Room({
     adaptiveStream: true,
     dynacast: true,
-    webAudioMix: true,
+    // Everyone's voices play through one context with a slightly larger buffer
+    // than "interactive": a busy moment on the computer (like joining) no longer
+    // turns into crackle, for ~10 ms more delay.
+    webAudioMix: { audioContext: playbackContext() },
     stopLocalTrackOnUnpublish: true,
     disconnectOnPageLeave: true,
     audioOutput: s.outputDevice ? { deviceId: s.outputDevice } : undefined,

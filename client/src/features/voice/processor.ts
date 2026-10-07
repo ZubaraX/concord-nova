@@ -44,7 +44,8 @@ async function modelBytes(url: string): Promise<ArrayBuffer> {
   return new Response(new Blob([buf]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer();
 }
 
-export async function deepFilterNode(ctx: AudioContext): Promise<AudioNode> {
+/** Downloads and compiles DeepFilterNet once per session (shared by every call). */
+function loadDeepCore(): Promise<DeepCore> {
   deepCore ??= (async () => {
     const { DeepFilterNet3Core } = await import("deepfilternet3-noise-filter");
     // 100 dB attenuation limit = remove the noise completely.
@@ -65,8 +66,24 @@ export async function deepFilterNode(ctx: AudioContext): Promise<AudioNode> {
     await core.initialize();
     return core;
   })();
+  return deepCore;
+}
+
+/**
+ * Called when the app is idle after sign-in: the 16 MB runtime is fetched and
+ * compiled before the first call instead of in the middle of joining it, when
+ * the computer is also busy connecting and starting everyone's audio.
+ */
+export function prewarmDenoiser() {
+  if (settings().noise !== "deep") return;
+  void loadDeepCore().catch(() => {
+    deepCore = null;
+  });
+}
+
+export async function deepFilterNode(ctx: AudioContext): Promise<AudioNode> {
   try {
-    const core = await deepCore;
+    const core = await loadDeepCore();
     await ctx.audioWorklet.addModule(cryptoShimUrl());
     return await core.createAudioWorkletNode(ctx);
   } catch (e) {

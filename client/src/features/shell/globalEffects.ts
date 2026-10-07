@@ -13,6 +13,7 @@ import { comboOf, globalShortcutMap, settings, useSettings } from "../../store/s
 import { joinVoice, toggleDeafen, toggleMute, useVoice } from "../voice/voice";
 import { stageFiles } from "../chat/composerFiles";
 import { installAppAudio } from "../voice/appAudio";
+import { prewarmDenoiser } from "../voice/processor";
 
 let notificationsReady = false;
 const IDLE_MS = 10 * 60_000;
@@ -68,6 +69,11 @@ export function useGlobalEffects() {
     cleanups.push(() => document.removeEventListener("visibilitychange", reportFocus));
     cleanups.push(useUI.subscribe((s, p) => s.channelId !== p.channelId && reportFocus()));
     reportFocus();
+
+    // Get the noise suppressor ready while nothing is happening, not when joining a call.
+    const idle = (cb: () => void) => ("requestIdleCallback" in window ? window.requestIdleCallback(cb, { timeout: 15_000 }) : setTimeout(cb, 4000));
+    const warm = setTimeout(() => idle(prewarmDenoiser), 3000);
+    cleanups.push(() => clearTimeout(warm));
 
     // Keyboard shortcuts.
     const onKey = (e: KeyboardEvent) => {

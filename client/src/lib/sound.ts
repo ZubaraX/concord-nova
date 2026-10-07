@@ -1,5 +1,8 @@
 // UI sounds, synthesized with WebAudio (no audio files to ship). One family:
-// soft sine/triangle tones with a faint detuned shimmer — "starlight".
+// soft sine/triangle tones. Call sounds are small bells — a sine with quiet
+// harmonics and a natural decay. (They used to carry a copy of themselves
+// detuned by 7 cents: the two beat against each other, and the join sound
+// audibly wobbled — "рябил".)
 import { settings } from "../store/settings";
 import { getAsset } from "./assets";
 
@@ -47,7 +50,7 @@ function tone(freq: number, at: number, dur: number, o: ToneOpts = {}) {
   g.gain.exponentialRampToValueAtTime(peak, t0 + (o.attack ?? 0.008));
   g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
   g.connect(master);
-  const voices = o.shimmer === false ? [0] : [0, 7];
+  const voices = o.shimmer ? [0, 7] : [0];
   for (const cents of voices) {
     const osc = c.createOscillator();
     osc.type = o.type ?? "sine";
@@ -63,6 +66,47 @@ function tone(freq: number, at: number, dur: number, o: ToneOpts = {}) {
 }
 
 const N = { C5: 523.25, D5: 587.33, E5: 659.25, G5: 783.99, A5: 880, B5: 987.77, C6: 1046.5, E6: 1318.5, G6: 1568, A6: 1760 };
+const L = { G4: 392, A4: 440, B4: 493.88, C5: 523.25, D5: 587.33, E5: 659.25, G5: 783.99 };
+
+/**
+ * A small bell for call sounds: the note plus quiet 2nd and 3rd harmonics,
+ * struck and left to decay, through a gentle low-pass — round, never shrill,
+ * and no detuned copies to beat against each other.
+ */
+function bell(freq: number, at: number, dur: number, gain = 0.1) {
+  const c = ac();
+  if (!c || !master) return;
+  const t0 = c.currentTime + at;
+  const lp = c.createBiquadFilter();
+  lp.type = "lowpass";
+  lp.frequency.value = 3200;
+  lp.connect(master);
+  // Quieter while you're in a call: the voices come first.
+  const level = gain * (inCall() ? 0.7 : 1);
+  for (const [mult, part] of [
+    [1, 1],
+    [2, 0.22],
+    [3, 0.06],
+  ] as const) {
+    const g = c.createGain();
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(level * part, t0 + 0.012);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur / mult + 0.05);
+    g.connect(lp);
+    const osc = c.createOscillator();
+    osc.type = "sine";
+    osc.frequency.value = freq * mult;
+    osc.connect(g);
+    osc.start(t0);
+    osc.stop(t0 + dur + 0.1);
+  }
+}
+
+/** Set by the voice module: are we in a call right now? */
+let inCall: () => boolean = () => false;
+export function setInCallProbe(fn: () => boolean) {
+  inCall = fn;
+}
 
 const SOUNDS = {
   message: () => {
@@ -74,46 +118,53 @@ const SOUNDS = {
     tone(N.E6, 0.08, 0.16, { gain: 0.11 });
     tone(N.G6, 0.16, 0.34, { gain: 0.1 });
   },
+  // ── call sounds: bells in the middle register, one gesture each ──
+  // Someone came in: a rising fourth. Someone left: the same, falling.
   join: () => {
-    tone(N.C5, 0, 0.16, { type: "triangle", gain: 0.12 });
-    tone(N.E5, 0.07, 0.16, { type: "triangle", gain: 0.12 });
-    tone(N.G5, 0.14, 0.3, { gain: 0.12 });
+    bell(L.A4, 0, 0.35, 0.09);
+    bell(L.D5, 0.11, 0.6, 0.09);
   },
   leave: () => {
-    tone(N.G5, 0, 0.16, { type: "triangle", gain: 0.11 });
-    tone(N.E5, 0.08, 0.16, { type: "triangle", gain: 0.11 });
-    tone(N.C5, 0.16, 0.3, { gain: 0.1 });
+    bell(L.D5, 0, 0.35, 0.08);
+    bell(L.A4, 0.11, 0.6, 0.08);
   },
+  // You're in: a soft major arpeggio. You left: it folds back down.
   connect: () => {
-    tone(N.E5, 0, 0.12, { type: "triangle", gain: 0.12 });
-    tone(N.A5, 0.07, 0.12, { type: "triangle", gain: 0.12 });
-    tone(N.C6, 0.14, 0.12, { gain: 0.11 });
-    tone(N.E6, 0.21, 0.42, { gain: 0.1 });
+    bell(L.G4, 0, 0.3, 0.09);
+    bell(L.B4, 0.09, 0.3, 0.09);
+    bell(L.D5, 0.18, 0.75, 0.09);
   },
   disconnect: () => {
-    tone(N.C6, 0, 0.14, { type: "triangle", gain: 0.11 });
-    tone(N.G5, 0.09, 0.14, { type: "triangle", gain: 0.11 });
-    tone(N.C5, 0.18, 0.34, { gain: 0.1, glideTo: 480 });
+    bell(L.D5, 0, 0.3, 0.08);
+    bell(L.B4, 0.09, 0.3, 0.08);
+    bell(L.G4, 0.18, 0.7, 0.08);
   },
-  mute: () => tone(620, 0, 0.12, { type: "triangle", gain: 0.1, glideTo: 380, shimmer: false }),
-  unmute: () => tone(380, 0, 0.12, { type: "triangle", gain: 0.1, glideTo: 640, shimmer: false }),
+  // Mic and sound: one short low tap down (off) or up (on).
+  mute: () => {
+    bell(L.E5, 0, 0.12, 0.07);
+    bell(L.B4, 0.06, 0.22, 0.07);
+  },
+  unmute: () => {
+    bell(L.B4, 0, 0.12, 0.07);
+    bell(L.E5, 0.06, 0.22, 0.07);
+  },
   deafen: () => {
-    tone(520, 0, 0.1, { type: "triangle", gain: 0.1, shimmer: false });
-    tone(340, 0.07, 0.16, { type: "triangle", gain: 0.1, shimmer: false });
+    bell(L.D5, 0, 0.12, 0.07);
+    bell(L.A4, 0.06, 0.14, 0.07);
+    bell(L.G4, 0.12, 0.26, 0.07);
   },
   undeafen: () => {
-    tone(340, 0, 0.1, { type: "triangle", gain: 0.1, shimmer: false });
-    tone(520, 0.07, 0.16, { type: "triangle", gain: 0.1, shimmer: false });
+    bell(L.G4, 0, 0.12, 0.07);
+    bell(L.A4, 0.06, 0.14, 0.07);
+    bell(L.D5, 0.12, 0.26, 0.07);
   },
   streamStart: () => {
-    tone(N.G5, 0, 0.1, { gain: 0.1 });
-    tone(N.B5, 0.06, 0.1, { gain: 0.1 });
-    tone(N.E6, 0.12, 0.3, { gain: 0.09 });
+    bell(L.C5, 0, 0.2, 0.08);
+    bell(L.G5, 0.1, 0.5, 0.07);
   },
   streamStop: () => {
-    tone(N.E6, 0, 0.1, { gain: 0.09 });
-    tone(N.B5, 0.06, 0.1, { gain: 0.09 });
-    tone(N.G5, 0.12, 0.26, { gain: 0.09 });
+    bell(L.G5, 0, 0.2, 0.07);
+    bell(L.C5, 0.1, 0.5, 0.08);
   },
   friend: () => {
     tone(N.D5, 0, 0.12, { type: "triangle", gain: 0.1 });
