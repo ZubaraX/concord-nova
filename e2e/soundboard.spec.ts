@@ -35,6 +35,8 @@ test("soundboard: a sound reaches the call with the mic muted; own sounds follow
   const b = await openAs(browser, bob, `/#/channels/${guild.id}/${voice.id}`);
   const p = a.page;
   const aliceSpeaks = b.page.locator(`[data-user="${alice.id}"] [data-speaking="true"]`);
+  // Bob's app plays her sounds itself (they don't travel as audio) and marks her tile meanwhile.
+  const aliceSound = b.page.locator(`[data-user="${alice.id}"] [data-soundboard-playing]`);
   const board = p.locator("[data-soundboard]");
   const openBoard = () => p.getByRole("button", { name: "Саундпад" }).last().click();
 
@@ -45,15 +47,16 @@ test("soundboard: a sound reaches the call with the mic muted; own sounds follow
   await p.getByRole("button", { name: "Выключить микрофон" }).last().click();
   await expect(aliceSpeaks).toHaveCount(0);
 
-  // A built-in sound goes out through her muted microphone track.
+  // A built-in sound reaches Bob with her microphone muted — and stops when she stops it.
   await openBoard();
   await expect(board.locator('[data-section="builtin"] [data-clip]')).toHaveCount(12);
   await board.locator('[data-clip="siren"]').click();
   await expect(board.locator('[data-clip="siren"]')).toHaveAttribute("data-playing", "true");
-  await expect(aliceSpeaks).toBeVisible();
+  await expect(aliceSound).toBeVisible();
+  await expect(aliceSpeaks).toHaveCount(0); // nothing went out through her microphone
   await board.getByRole("button", { name: "Остановить звуки" }).click();
   await expect(board.locator('[data-clip="siren"]')).toHaveAttribute("data-playing", "false");
-  await expect(aliceSpeaks).toHaveCount(0);
+  await expect(aliceSound).toHaveCount(0);
 
   // Her own sound: a file, a name taken from it, an emoji — kept on her account.
   await board.locator('[data-section="mine"]').getByRole("button", { name: "Добавить" }).click();
@@ -69,7 +72,7 @@ test("soundboard: a sound reaches the call with the mic muted; own sounds follow
   const mine = board.locator('[data-section="mine"] [data-clip]').filter({ hasText: "гудок" });
   await expect(mine).toContainText("🚀");
   await mine.click();
-  await expect(aliceSpeaks).toBeVisible();
+  await expect(aliceSound).toBeVisible(); // Bob fetched her file
   await expect(mine).toHaveAttribute("data-playing", "false", { timeout: 6000 });
 
   // A picture instead of the emoji.
@@ -81,22 +84,21 @@ test("soundboard: a sound reaches the call with the mic muted; own sounds follow
   await dialog.getByRole("button", { name: "Сохранить" }).click();
   await expect(dialog).toHaveCount(0);
 
-  // A sound for the server: Bob gets it at once and can play it — muted, he is heard only through it.
+  // A sound for the server: Bob gets it at once and can play it, muted too.
   await openBoard();
   await board.locator(`[data-section="guild:${guild.id}"]`).getByRole("button", { name: "Добавить" }).click();
   await choose(p, () => dialog.getByRole("button", { name: "Выбрать файл" }).click(), { name: "горн-сервера.wav", mimeType: "audio/wav", buffer: wav(2, 330) });
   await expect(dialog.getByLabel("Где сохранить")).toHaveValue(guild.id);
   await dialog.getByRole("button", { name: "Добавить", exact: true }).click();
   await expect(dialog).toHaveCount(0);
-  const bobSpeaks = p.locator(`[data-user="${bob.id}"] [data-speaking="true"]`);
+  const bobSound = p.locator(`[data-user="${bob.id}"] [data-soundboard-playing]`);
   await b.page.getByRole("button", { name: "Выключить микрофон" }).last().click();
-  await expect(bobSpeaks).toHaveCount(0);
   await b.page.getByRole("button", { name: "Саундпад" }).last().click();
   const shared = b.page.locator(`[data-soundboard] [data-section="guild:${guild.id}"] [data-clip]`).filter({ hasText: "горн-сервера" });
   await expect(shared).toBeVisible();
   await expect(b.page.getByRole("button", { name: "Изменить: горн-сервера" })).toHaveCount(0); // not his to change
   await shared.click();
-  await expect(bobSpeaks).toBeVisible();
+  await expect(bobSound).toBeVisible();
 
   // Her own sound is on her other devices too, picture and all.
   const other = await openAs(browser, alice, "/");
@@ -236,4 +238,60 @@ test("soundboard: drag a sound of yours onto the server and a server's into your
   await p.getByRole("menuitem", { name: /Копировать на сервер/ }).first().click();
   await expect(server.locator("[data-sound]").filter({ hasText: "второй" })).toBeVisible();
   noErrors(b);
+});
+
+test("soundboard: playing sounds often sends no audio of its own and leaves the call alone", async ({ browser, request }) => {
+  test.skip(!!process.env.E2E_URL, "imports modules through the dev server");
+  const alice = await register(request, "Алиса");
+  const bob = await register(request, "Боб");
+  const { guild, voice } = await guildWith(request, alice, [bob]);
+  const a = await openAs(browser, alice, `/#/channels/${guild.id}/${voice.id}`, { local: { noise: "off" } });
+  const b = await openAs(browser, bob, `/#/channels/${guild.id}/${voice.id}`, { local: { noise: "off" } });
+  await a.page.getByRole("button", { name: "Зайти в канал" }).click();
+  await b.page.getByRole("button", { name: "Зайти в канал" }).click();
+  const aliceSpeaks = b.page.locator(`[data-user="${alice.id}"] [data-speaking="true"]`);
+  const aliceSound = b.page.locator(`[data-user="${alice.id}"] [data-soundboard-playing]`);
+  await expect(aliceSpeaks).toBeVisible({ timeout: 20_000 });
+
+  /** Alice's room as seen from a page: what she publishes, the call state, and a LiveKit scenario to run first. */
+  const room = (page: Page, act = "") =>
+    page.evaluate(
+      async ([aliceId, act]) => {
+        const url = performance.getEntriesByType("resource").map((e) => e.name).find((n) => n.includes("/src/features/voice/voice.ts")) ?? "/src/features/voice/voice.ts";
+        const m = (await import(/* @vite-ignore */ url)) as { getRoom: () => import("livekit-client").Room | null; useVoice: { getState: () => { state: string } } };
+        const r = m.getRoom();
+        if (act) await r?.simulateScenario(act as never);
+        const p = r?.localParticipant.identity === aliceId ? r.localParticipant : r?.remoteParticipants.get(aliceId);
+        return { state: m.useVoice.getState().state, tracks: [...(p?.trackPublications.values() ?? [])].map((t) => `${t.source}:${t.trackName}`).sort() };
+      },
+      [alice.id, act] as const
+    );
+  const before = (await room(a.page)).tracks;
+  expect(before).toEqual(["microphone:"]);
+
+  // A dozen sounds in quick succession: Bob hears them, no more than four at a time.
+  await a.page.getByRole("button", { name: "Саундпад" }).last().click();
+  for (let i = 0; i < 12; i++) await a.page.locator('[data-clip="ding"]').click();
+  await expect(aliceSound).toBeVisible();
+  const most = await b.page.evaluate(async (aliceId) => {
+    const url = performance.getEntriesByType("resource").map((e) => e.name).find((n) => n.includes("/src/features/voice/clips.ts")) ?? "/src/features/voice/clips.ts";
+    const m = (await import(/* @vite-ignore */ url)) as { useSoundboard: { getState: () => { heard: Record<string, number> } } };
+    return m.useSoundboard.getState().heard[aliceId] ?? 0;
+  }, alice.id);
+  expect(most).toBeLessThanOrEqual(4);
+  await expect(aliceSound).toHaveCount(0, { timeout: 8000 });
+
+  // Nothing was published for them, on either side; her voice still comes through.
+  expect((await room(a.page)).tracks).toEqual(before);
+  expect((await room(b.page)).tracks).toEqual(before);
+  await expect(aliceSpeaks).toBeVisible();
+
+  // After a full reconnect, sounds and voice both still arrive.
+  await room(a.page, "full-reconnect");
+  await expect.poll(async () => (await room(a.page)).state, { timeout: 20_000 }).toBe("connected");
+  await expect(aliceSpeaks).toBeVisible({ timeout: 20_000 });
+  await a.page.locator('[data-clip="ding"]').click();
+  await expect(aliceSound).toBeVisible();
+  expect((await room(b.page)).tracks).toEqual(before);
+  noErrors(a, b);
 });

@@ -131,14 +131,19 @@ function applyVolume(p: RemoteParticipant) {
   const v = deaf || localMuted ? 0 : ((s.userVolumes[p.identity] ?? 100) / 100) * master;
   const sv = deaf || localMuted || s.streamMutes[p.identity] ? 0 : ((s.streamVolumes[p.identity] ?? 100) / 100) * master;
   const bv = deaf || localMuted ? 0 : ((s.soundboardVolumes[p.identity] ?? 100) / 100) * ((s.soundboardVolume ?? 100) / 100) * master;
-  p.setVolume(v, Track.Source.Microphone);
-  p.setVolume(sv, Track.Source.ScreenShareAudio);
+  // Track by track, not p.setVolume(source): someone on 1.5–1.7.1 has two
+  // microphone-source tracks, and that would only reach the first of them —
+  // after a reconnect, that was often the soundboard rather than the voice.
   for (const pub of p.audioTrackPublications.values()) {
-    if (pub.trackName === SOUNDBOARD_TRACK && pub.track) (pub.track as RemoteAudioTrack).setVolume(bv);
+    const track = pub.track as RemoteAudioTrack | undefined;
+    if (!track) continue;
+    if (pub.trackName === SOUNDBOARD_TRACK) track.setVolume(bv);
+    else if (pub.source === Track.Source.ScreenShareAudio) track.setVolume(sv);
+    else track.setVolume(v);
   }
 }
 
-/** Soundboard sounds travel as a track of their own, so everyone can set how loud they hear them. */
+/** Versions 1.5–1.7.1 sent soundboard sounds as an audio track of this name (still played, for whoever hasn't updated). */
 export const SOUNDBOARD_TRACK = "soundboard";
 
 /** The voice itself — not the soundboard track, which is a microphone-source track too. */
@@ -230,63 +235,55 @@ export function micLevel(): number {
   return mic?.level ?? -100;
 }
 
-/** Soundboard: plays a sound to everyone in the call through the microphone track. Null when nothing is being sent (no call, no microphone). */
-export async function playIntoCall(buffer: AudioBuffer, gain: number): Promise<(() => void) | null> {
-  if (!room) return null;
-  const out = await soundboardOutput();
-  if (out) {
-    const src = out.ctx.createBufferSource();
-    src.buffer = buffer;
-    const g = out.ctx.createGain();
-    g.gain.value = gain;
-    src.connect(g).connect(out.dest);
-    src.onended = () => g.disconnect();
-    src.start();
-    return () => {
-      try {
-        src.stop();
-      } catch {
-        /* already over */
-      }
-    };
-  }
-  // The separate track couldn't be published: mix the sound into the microphone,
-  // as before (others then can't set its volume apart from the voice).
-  if (!mic || !voicePublication(room.localParticipant)) return null;
-  return mic.playClip(buffer, gain);
+// ── soundboard ───────────────────────────────────────────────────────────────
+// A sound isn't sent as audio. Everyone in the call gets "play this sound" over
+// the data channel and plays it on their own device, at their own volume — as
+// Discord does. Until 1.7.1 it went out as an audio track of its own: a second
+// microphone-source track, published in the middle of the call (renegotiating
+// everyone's connection), which LiveKit took for the microphone whenever the
+// mic restarted or the default device changed — and then nobody heard the voice.
+
+/** A sound someone plays: a built-in by id (url null), or a server file by its /files/ path. `n` tells one playing from another. */
+export interface ClipMessage {
+  id: string;
+  url: string | null;
+  /** The player's own soundboard volume, 0–1. */
+  g: number;
+  n: number;
 }
 
-let board: { room: Room; ctx: AudioContext; dest: MediaStreamAudioDestinationNode; ready: Promise<boolean> } | null = null;
+const clips = () => import("./clips");
 
-/** The soundboard track, published on first use in a call (null if the server doesn't allow it). */
-async function soundboardOutput(): Promise<{ ctx: AudioContext; dest: MediaStreamAudioDestinationNode } | null> {
-  const r = room;
-  if (!r) return null;
-  if (!board || board.room !== r) {
-    closeSoundboard();
-    const ctx = new AudioContext({ sampleRate: 48_000, latencyHint: "interactive" });
-    const dest = ctx.createMediaStreamDestination();
-    const track = dest.stream.getAudioTracks()[0];
-    const ready = r.localParticipant
-      // A second microphone-source track: allowed by LiveKit, and a server mute takes it away with the voice.
-      .publishTrack(track, { name: SOUNDBOARD_TRACK, source: Track.Source.Microphone, dtx: true, red: false, audioPreset: AudioPresets.music })
-      .then(() => true)
-      .catch((e) => {
-        console.warn("[voice] soundboard track refused, mixing into the microphone", e);
-        return false;
-      });
-    board = { room: r, ctx, dest, ready };
-    void ctx.resume().catch(() => {});
-  }
-  const b = board;
-  return (await b.ready) && room === b.room ? b : null;
+/** Allowed to speak (not muted by a moderator)? 2 is LiveKit's TrackSource.MICROPHONE. */
+function maySpeak(p: Participant): boolean {
+  const perm = p.permissions;
+  if (!perm) return true;
+  return perm.canPublish && (perm.canPublishSources.length === 0 || perm.canPublishSources.includes(2));
 }
 
-function closeSoundboard() {
-  const b = board;
-  board = null;
-  if (b) void b.ctx.close().catch(() => {});
+const send = (msg: object) => {
+  void room?.localParticipant.publishData(new TextEncoder().encode(JSON.stringify(msg)), { reliable: true }).catch(() => {});
+};
+
+/** Soundboard: tells everyone in the call to play a sound. False when it can't (no call, muted by a moderator). */
+export function sendClip(clip: ClipMessage): boolean {
+  if (!room || V().state !== "connected" || !maySpeak(room.localParticipant)) return false;
+  send({ t: "clip", ...clip });
+  return true;
 }
+
+export function sendClipStop(n: number) {
+  if (room) send({ t: "clip-stop", n });
+}
+
+function receiveClip(p: RemoteParticipant, msg: ClipMessage) {
+  const s = settings();
+  if (V().deafened || s.localMutes[p.identity] || !maySpeak(p)) return;
+  const gain = ((s.soundboardVolumes[p.identity] ?? 100) / 100) * ((s.soundboardVolume ?? 100) / 100);
+  void clips().then((m) => m.playRemoteClip(p.identity, msg, gain));
+}
+
+const stopRemoteClips = () => void clips().then((m) => m.stopRemoteClips());
 
 // ── what to download ─────────────────────────────────────────────────────────
 const isStream = (pub: RemoteTrackPublication) => pub.source === Track.Source.ScreenShare || pub.source === Track.Source.ScreenShareAudio;
@@ -451,8 +448,10 @@ function wire(r: Room) {
     .on(RoomEvent.AudioPlaybackStatusChanged, () => setV({ needsAudioUnlock: !r.canPlaybackAudio }))
     .on(RoomEvent.DataReceived, (payload, p) => {
       try {
-        const msg = JSON.parse(new TextDecoder().decode(payload)) as { t: string; e?: string };
+        const msg = JSON.parse(new TextDecoder().decode(payload)) as { t: string; e?: string } & Partial<ClipMessage>;
         if (msg.t === "emoji" && msg.e && p) addReaction(p.identity, msg.e);
+        else if (msg.t === "clip" && p) receiveClip(p, msg as ClipMessage);
+        else if (msg.t === "clip-stop" && p && typeof msg.n === "number") void clips().then((m) => m.stopRemoteClips(p.identity, msg.n));
       } catch {
         /* not ours */
       }
@@ -490,7 +489,7 @@ async function onDisconnected(reason?: DisconnectReason) {
 
 function cleanup() {
   stopAloneWatch();
-  closeSoundboard();
+  stopRemoteClips();
   for (const el of audioEls.values()) el.remove();
   audioEls.clear();
   void mic?.destroy().catch(() => {});
@@ -594,6 +593,7 @@ export function toggleDeafen() {
   const deaf = !V().deafened;
   setV({ deafened: deaf });
   applyAllVolumes();
+  if (deaf) stopRemoteClips();
   playSound(deaf ? "deafen" : "undeafen");
   reportSelf();
 }

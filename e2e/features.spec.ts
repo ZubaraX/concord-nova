@@ -240,13 +240,22 @@ test("streams open only on request and each one's sound can be muted; soundboard
   await expect(stream.getByRole("button", { name: "Смотреть трансляцию" })).toBeVisible();
   await expect.poll(async () => (await fromAlice()).screen_share?.subscribed).toBe(false);
 
-  // Alice's soundboard sound arrives as a track of its own; Bob sets how loud it is for him.
-  await a.page.getByRole("button", { name: "Саундпад" }).last().click();
-  await a.page.locator('[data-clip="siren"]').click();
-  await expect.poll(async () => (await fromAlice()).soundboard?.subscribed, { timeout: 15_000 }).toBe(true);
+  // Alice's soundboard sound is played by Bob's app, as loud as he sets it — no track of its own.
   await b.page.getByRole("button", { name: "Саундпад" }).last().click();
   const others = b.page.locator("[data-soundboard]").locator('input[type="range"]').nth(1);
   await others.fill("40");
-  await expect.poll(async () => (await fromAlice()).soundboard?.volume).toBeCloseTo(0.4, 2);
+  await b.page.keyboard.press("Escape");
+  await a.page.getByRole("button", { name: "Саундпад" }).last().click();
+  const mine = await a.page.locator("[data-soundboard]").locator('input[type="range"]').first().inputValue();
+  await a.page.locator('[data-clip="siren"]').click();
+  await expect(b.page.locator(`[data-user="${alice.id}"] [data-soundboard-playing]`).first()).toBeVisible();
+  const heard = await b.page.evaluate(async () => {
+    const url = performance.getEntriesByType("resource").map((e) => e.name).find((n) => n.includes("/src/features/voice/clips.ts")) ?? "/src/features/voice/clips.ts";
+    const m = (await import(/* @vite-ignore */ url)) as { useSoundboard: { getState: () => { lastHeard: { from: string; gain: number } | null } } };
+    return m.useSoundboard.getState().lastHeard;
+  });
+  expect(heard?.from).toBe(alice.id);
+  expect(heard?.gain).toBeCloseTo((Number(mine) / 100) * 0.4, 2);
+  expect(Object.keys(await fromAlice())).not.toContain("soundboard");
   noErrors(a, b);
 });

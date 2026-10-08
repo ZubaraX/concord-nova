@@ -24,6 +24,7 @@ import {
   Settings2,
   Eye,
   EyeOff,
+  AudioLines,
 } from "lucide-react";
 import type { Track } from "livekit-client";
 import { t } from "../../lib/i18n";
@@ -38,6 +39,7 @@ import { UserAvatar } from "../../components/ui/avatar";
 import { toggleLocalMute, userMenu } from "../shell/menus";
 import { PingButton } from "./ConnectionStats";
 import { SoundboardButton } from "./Soundboard";
+import { useSoundboard } from "./clips";
 import { flipCamera, isLocal, joinVoice, leaveVoice, sendReaction, toggleCamera, toggleDeafen, toggleMute, toggleScreen, trackFor, useVoice, watchStream } from "./voice";
 
 /** Stream sound on/off for one person — the picture keeps playing. */
@@ -88,6 +90,7 @@ const Tile = memo(function Tile({ spec, focused, small, onFocus, guildId }: { sp
   const autoWatch = useSettings((s) => s.autoWatchStreams);
   const watched = useVoice((s) => !!s.watching[spec.userId]) || autoWatch;
   const streamMuted = useSettings((s) => !!s.streamMutes[spec.userId]);
+  const soundboard = useSoundboard((s) => (me ? Object.keys(s.playing).length > 0 : !!s.heard[spec.userId]));
   // Somebody else's stream you haven't opened: nothing is downloaded until "Watch".
   const offer = spec.source === "screen" && !me && !watched;
   const toggleFullscreen = () => {
@@ -147,6 +150,11 @@ const Tile = memo(function Tile({ spec, focused, small, onFocus, guildId }: { sp
         {ringing && <span className="shrink-0 font-medium text-fg-3">· {t("call.calling")}</span>}
         {spec.source !== "screen" && muted &&<MicOff size={13} className={clsx("shrink-0", vs?.serverMute ? "text-bad" : "text-fg-2")} />}
         {spec.source !== "screen" && deaf && <HeadphoneOff size={13} className="shrink-0 text-fg-2" />}
+        {spec.source !== "screen" && soundboard && (
+          <span title={t("soundboard.playingNow")} className="flex shrink-0" data-soundboard-playing>
+            <AudioLines size={13} className="text-star" />
+          </span>
+        )}
         {localMuted && !me && (
           <span title={t("voice.localMuted")} className="flex shrink-0">
             <VolumeX size={13} className="text-bad" />

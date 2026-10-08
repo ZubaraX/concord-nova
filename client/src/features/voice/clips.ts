@@ -10,7 +10,7 @@ import { toast } from "../../lib/bus";
 import { t } from "../../lib/i18n";
 import { decodeAudio, playBuffer } from "../../lib/sound";
 import { mediaUrl } from "../../lib/server";
-import { playIntoCall, useVoice } from "./voice";
+import { sendClip, sendClipStop, useVoice, type ClipMessage } from "./voice";
 import { useExpressions } from "./expressions";
 
 export const MAX_CLIP_SECONDS = 30;
@@ -375,9 +375,13 @@ interface SoundboardState {
   playing: Record<string, number>;
   /** 0–100, for what goes into the call and what you hear yourself. */
   volume: number;
+  /** Sounds others in the call are playing here right now, by who. */
+  heard: Record<string, number>;
+  /** The last of them, with the volume it got. */
+  lastHeard: { from: string; id: string; gain: number } | null;
 }
 
-export const useSoundboard = create<SoundboardState>(() => ({ playing: {}, volume: readVolume() }));
+export const useSoundboard = create<SoundboardState>(() => ({ playing: {}, volume: readVolume(), heard: {}, lastHeard: null }));
 
 export function setSoundboardVolume(volume: number) {
   useSoundboard.setState({ volume });
@@ -396,28 +400,40 @@ export async function checkClip(file: Blob): Promise<"ok" | "unreadable" | "too_
   return b.duration > MAX_CLIP_SECONDS ? "too_long" : "ok";
 }
 
-/** Decoded clips, keyed by id (and, for server sounds, by file: a replaced file is fetched again). */
-const buffers = new Map<string, { url: string; p: Promise<AudioBuffer | null> }>();
+const isBuiltin = (id: string) => BUILTIN.some((b) => b.id === id);
 
-function clipBuffer(id: string): Promise<AudioBuffer | null> {
-  const builtin = BUILTIN.some((b) => b.id === id);
-  const sound = builtin ? null : useExpressions.getState().sounds.find((x) => x.id === id);
-  if (!builtin && !sound) return Promise.resolve(null);
-  const url = sound?.url ?? id;
-  const hit = buffers.get(id);
-  if (hit && hit.url === url) return hit.p;
+/** Decoded clips: built-ins by id, server sounds by file (a replaced file is fetched again). The oldest go first past a limit. */
+const buffers = new Map<string, Promise<AudioBuffer | null>>();
+const MAX_BUFFERS = 48;
+
+/** A built-in (`url` null) or a server file, decoded and levelled. */
+function loadBuffer(id: string, url: string | null): Promise<AudioBuffer | null> {
+  const key = url ?? id;
+  const hit = buffers.get(key);
+  if (hit) {
+    buffers.delete(key);
+    buffers.set(key, hit);
+    return hit;
+  }
   const p = (
-    builtin
-      ? renderBuiltin(id)
-      : fetch(mediaUrl(url)!)
+    url
+      ? fetch(mediaUrl(url)!)
           .then((r) => (r.ok ? r.blob() : null))
           .then((blob) => (blob ? decodeAudio(blob) : null))
           .then((b) => (b ? normalise(b) : null))
+      : renderBuiltin(id)
   ).catch(() => null);
-  buffers.set(id, { url, p });
+  buffers.set(key, p);
+  if (buffers.size > MAX_BUFFERS) buffers.delete(buffers.keys().next().value!);
   // A failure isn’t remembered: the next click tries again.
-  void p.then((b) => !b && buffers.get(id)?.p === p && buffers.delete(id));
+  void p.then((b) => !b && buffers.get(key) === p && buffers.delete(key));
   return p;
+}
+
+/** The file of a sound of yours or a server's; null for a built-in (and for a sound that's gone: undefined). */
+function soundUrl(id: string): string | null | undefined {
+  if (isBuiltin(id)) return null;
+  return useExpressions.getState().sounds.find((x) => x.id === id)?.url;
 }
 
 // ── playing ──────────────────────────────────────────────────────────────────
@@ -436,18 +452,24 @@ const bumpPlaying = (id: string, by: number) =>
 /** Own share of the sound in one's headphones, relative to what the call gets. */
 const MONITOR = 0.7;
 
+// Numbers each playing, so a stop reaches the right one (random start: a restart doesn't reuse them).
+let playNo = Math.floor(Math.random() * 1e9);
+
 /**
- * Plays a clip: into the call when there is one (everybody hears it), and to
- * yourself either way. `localOnly` is the preview in settings and the editor.
+ * Plays a clip: in the call when there is one (everybody plays it on their
+ * side), and to yourself either way. `localOnly` is the preview in settings
+ * and the editor.
  */
 export async function playClip(id: string, localOnly = false) {
   const v = useVoice.getState();
   const inCall = !localOnly && v.state === "connected";
   if (inCall && v.deafened) return toast(t("soundboard.deafened"));
   if (stops.size >= MAX_AT_ONCE) return;
-  const buffer = await clipBuffer(id);
-  if (!buffer) return toast(t("soundboard.unreadable"), "error");
+  const url = soundUrl(id);
+  const buffer = url === undefined ? null : await loadBuffer(id, url);
+  if (!buffer || url === undefined) return toast(t("soundboard.unreadable"), "error");
   const gain = useSoundboard.getState().volume / 100;
+  const n = ++playNo;
   let done = false;
   const finish = () => {
     if (done) return;
@@ -455,18 +477,73 @@ export async function playClip(id: string, localOnly = false) {
     stops.delete(stop);
     bumpPlaying(id, -1);
   };
-  const toCall = inCall ? await playIntoCall(buffer, gain) : null;
-  const local = playBuffer(buffer, gain * (toCall ? MONITOR : 1), finish);
+  const sent = inCall && sendClip({ id, url, g: gain, n });
+  const local = playBuffer(buffer, gain * (sent ? MONITOR : 1), finish);
   const stop = () => {
-    toCall?.();
+    if (sent) sendClipStop(n);
     local();
     finish();
   };
   stops.add(stop);
   bumpPlaying(id, 1);
-  if (inCall && !toCall) toast(t("soundboard.noMic"));
+  if (inCall && !sent) toast(t("soundboard.notAllowed"));
 }
 
 export function stopClips() {
   for (const stop of [...stops]) stop();
 }
+
+// ── others' sounds, played here ──────────────────────────────────────────────
+/** Only this server's own files: a sound must not make everyone fetch an address of the sender's choosing. */
+const SAFE_URL = /^\/files\/[\w\-./%]+$/;
+/** All at once, from everyone together. */
+const MAX_HEARD = 8;
+/** Arriving later than this (a slow download), it's skipped rather than played out of time. */
+const MAX_LATE_MS = 3000;
+
+const heard = new Map<string, { from: string; stop: () => void }>();
+
+/** Someone in the call played a sound; `gain` is how loud you set them (their soundboard, and everyone's). */
+export function playRemoteClip(from: string, msg: ClipMessage, gain: number) {
+  const url = typeof msg.url === "string" && SAFE_URL.test(msg.url) && !msg.url.includes("..") ? msg.url : null;
+  if (typeof msg.id !== "string" || typeof msg.n !== "number" || (!url && (msg.url != null || !isBuiltin(msg.id)))) return;
+  const key = `${from}:${msg.n}`;
+  if (heard.has(key) || heard.size >= MAX_HEARD) return;
+  if ([...heard.values()].filter((h) => h.from === from).length >= MAX_AT_ONCE) return;
+  const at = Date.now();
+  let stopped = false;
+  let stopLocal: (() => void) | null = null;
+  const done = () => {
+    if (heard.get(key)?.stop !== stop) return;
+    heard.delete(key);
+    bumpHeard(from, -1);
+  };
+  const stop = () => {
+    stopped = true;
+    stopLocal?.();
+    done();
+  };
+  heard.set(key, { from, stop });
+  bumpHeard(from, 1);
+  void loadBuffer(msg.id, url).then((b) => {
+    if (stopped) return;
+    if (!b || Date.now() - at > MAX_LATE_MS) return done();
+    const g = Math.min(1, Math.max(0, Number(msg.g) || 0)) * gain;
+    useSoundboard.setState({ lastHeard: { from, id: msg.id, gain: g } });
+    stopLocal = playBuffer(b, g, done);
+  });
+}
+
+/** Stops one sound someone played (or theirs, or everyone's). */
+export function stopRemoteClips(from?: string, n?: number) {
+  for (const [key, h] of [...heard]) if ((from == null || h.from === from) && (n == null || key === `${from}:${n}`)) h.stop();
+}
+
+const bumpHeard = (from: string, by: number) =>
+  useSoundboard.setState((s) => {
+    const k = Math.max(0, (s.heard[from] ?? 0) + by);
+    const next = { ...s.heard };
+    if (k) next[from] = k;
+    else delete next[from];
+    return { heard: next };
+  });
