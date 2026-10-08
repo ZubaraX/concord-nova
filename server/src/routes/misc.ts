@@ -24,7 +24,9 @@ export async function inviteRoutes(app: FastifyInstance) {
 export async function diagRoutes(app: FastifyInstance) {
   app.post("/", { preHandler: authenticate, bodyLimit: 512 * 1024 }, async (req) => {
     limits.diag.consume(req.auth.userId);
-    const body = parse(z.object({ client: z.string().max(160), lines: z.array(z.string().max(1000)).min(1).max(500) }), req.body);
+    // Too long is cut rather than refused: a refused log is a lost one (1.7.3's Windows app sent a 171-character name).
+    const cut = (n: number) => z.string().transform((s) => s.slice(0, n));
+    const body = parse(z.object({ client: cut(300), lines: z.array(cut(2000)).min(1).max(1000) }), req.body);
     await appendDiag(req.auth.userId, body.client, body.lines);
     return { ok: true };
   });

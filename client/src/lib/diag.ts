@@ -67,7 +67,7 @@ export function diagError(area: string, e: unknown, data?: Record<string, unknow
 
 /** Which app this is: version, platform, browser. */
 export function clientInfo(): string {
-  return clip(`Nova ${__APP_VERSION__} ${platform} · ${navigator.userAgent}`, 160);
+  return clip(`Nova ${__APP_VERSION__} ${platform} · ${navigator.userAgent}`, 280);
 }
 
 /** The whole log as text, to copy. */

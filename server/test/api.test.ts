@@ -372,6 +372,19 @@ describe("friends and DMs", () => {
 });
 
 describe("instance admin", () => {
+  it("diagnostic logs: long app names and lines are cut, not refused; only admins read them", async () => {
+    // The Windows app's name with its user agent is ~170 characters: 1.7.3 refused it, and no log ever arrived.
+    const client = "Nova 1.7.3 desktop · Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) @novaclient/1.7.3 Chrome/140.0.7339.249 Electron/38.8.6 Safari/537.36";
+    const sent = await api("POST", "/api/diag", bob.token, { client, lines: ["2026-10-08T00:00:00.000Z [voice] join", "x".repeat(5000)] });
+    expect(sent.status, JSON.stringify(sent.body)).toBe(200);
+    expect((await api("GET", "/api/admin/diag", bob.token)).status).toBe(403);
+    const list = await api<{ userId: string }[]>("GET", "/api/admin/diag", alice.token);
+    expect(list.body.some((f) => f.userId === bob.id)).toBe(true);
+    const log = await api<{ text: string }>("GET", `/api/admin/diag/${bob.id}`, alice.token);
+    expect(log.body.text).toContain("[voice] join");
+    expect(log.body.text).toContain("Electron/38");
+  });
+
   it("only instance admins reach /api/admin", async () => {
     expect((await api("GET", "/api/admin/overview", alice.token)).status).toBe(200);
     const denied = await api("GET", "/api/admin/overview", bob.token);
