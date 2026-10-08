@@ -7,6 +7,7 @@ import type { Activity, ChosenStatus, ClientToServerEvents, DispatchEvent, Serve
 import { freshToken, refreshAccess, tokens } from "./api";
 import { serverBase } from "./server";
 import { platform } from "./platform";
+import { diag } from "./diag";
 import { bus } from "./bus";
 import { applyDispatch } from "../store/data";
 import * as msgs from "../store/messages";
@@ -108,13 +109,20 @@ export function connectGateway() {
   });
 
   socket.on("dispatch", handle);
+  socket.on("connect", () => diag("gateway", "connected"));
   socket.on("disconnect", (reason) => {
+    diag("gateway", "disconnected", { reason, online: navigator.onLine });
     setState(navigator.onLine ? "reconnecting" : "offline");
     // The server dropped us on purpose (revoked session / restart) — socket.io
     // won't retry by itself in that case.
     if (reason === "io server disconnect") setTimeout(() => socket?.connect(), 1000);
   });
   socket.on("connect_error", async (err) => {
+    // Once a minute at most while it keeps failing the same way.
+    if (err.message !== lastConnectError.message || Date.now() - lastConnectError.at > 60_000) {
+      lastConnectError = { message: err.message, at: Date.now() };
+      diag("gateway", "connect error", { message: err.message, online: navigator.onLine });
+    }
     setState(navigator.onLine ? "reconnecting" : "offline");
     if (err.message === "unauthorized") {
       // Middleware rejections are not retried automatically: refresh, then retry.
@@ -128,6 +136,8 @@ export function connectGateway() {
   });
   socket.io.on("reconnect_attempt", () => setState(navigator.onLine ? "reconnecting" : "offline"));
 }
+
+let lastConnectError = { message: "", at: 0 };
 
 export function disconnectGateway() {
   socket?.removeAllListeners();

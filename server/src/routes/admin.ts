@@ -6,8 +6,9 @@ import { prisma } from "../db";
 import { sendMailOrThrow } from "../lib/mail";
 import { instance, mailOverview, setMailSettings } from "../services/instance";
 import { authenticate } from "../lib/auth";
-import { badRequest, forbidden, parse } from "../lib/errors";
+import { badRequest, forbidden, notFound, parse } from "../lib/errors";
 import * as admin from "../services/admin";
+import { listDiag, readDiag } from "../services/diag";
 
 const idParam = z.object({ id: z.string().regex(/^[0-9A-HJKMNP-TV-Z]{26}$/) });
 
@@ -40,6 +41,14 @@ export async function adminRoutes(app: FastifyInstance) {
   });
 
   app.put("/settings", async (req) => admin.setInstanceSettings(parse(instanceSettingsSchema, req.body)));
+
+  // The apps' diagnostic logs, one file per user.
+  app.get("/diag", async () => listDiag());
+  app.get("/diag/:id", async (req) => {
+    const text = await readDiag(parse(idParam, req.params).id);
+    if (text == null) throw notFound("no_log");
+    return { text };
+  });
 
   // Password-reset mail: the account, and a test letter to the admin's own address.
   app.put("/mail", async (req) => {

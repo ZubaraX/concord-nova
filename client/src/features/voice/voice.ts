@@ -25,6 +25,7 @@ import {
   type TrackPublishOptions,
 } from "livekit-client";
 import { api, ApiError } from "../../lib/api";
+import { diag, diagError, flushDiag } from "../../lib/diag";
 import { bus, toast } from "../../lib/bus";
 import { gw } from "../../lib/gateway";
 import { errorText, t } from "../../lib/i18n";
@@ -200,7 +201,10 @@ async function publishMic() {
     const track = pub?.track as LocalAudioTrack | undefined;
     if (track) await track.setProcessor(mic);
     setV({ denoiser: mic.denoiser });
+    const s = settings();
+    diag("mic", track ? "on" : "no track", { denoiser: mic.denoiser, noise: s.noise, effect: s.voiceEffect, device: s.inputDevice ?? "default", label: track?.mediaStreamTrack.label });
   } catch (e) {
+    diagError("mic", e);
     const name = (e as Error)?.name;
     if (name === "NotAllowedError" || name === "SecurityError") toast(t("errors.microphone_denied"), "error");
     else if (name === "NotFoundError") toast(t("voice.noMic"), "error");
@@ -210,6 +214,7 @@ async function publishMic() {
 
 async function restartMic() {
   if (!room) return;
+  diag("mic", "restart");
   const pub = voicePublication(room.localParticipant);
   if (pub?.track) await room.localParticipant.unpublishTrack(pub.track as LocalTrack, true).catch(() => {});
   await mic?.destroy().catch(() => {});
@@ -371,12 +376,14 @@ export function stayInCall() {
 
 // ── connect / disconnect ─────────────────────────────────────────────────────
 function wire(r: Room) {
-  r.on(RoomEvent.ParticipantConnected, () => {
+  r.on(RoomEvent.ParticipantConnected, (p) => {
+    diag("voice", "someone joined", { who: p.identity });
     playSound("join");
     bump();
     watchAlone();
   })
     .on(RoomEvent.ParticipantDisconnected, (p) => {
+      diag("voice", "someone left", { who: p.identity });
       playSound("leave");
       const s = { ...V().speaking };
       delete s[p.identity];
@@ -433,19 +440,30 @@ function wire(r: Room) {
       setV({ speaking: next });
     })
     .on(RoomEvent.ConnectionQualityChanged, (q: ConnectionQuality, p: Participant) => {
+      const mine = p.identity === r.localParticipant.identity;
+      if (mine || q === ConnectionQuality.Poor || q === ConnectionQuality.Lost) diag("quality", QUALITY[q], { who: mine ? "me" : p.identity });
       setV({ quality: { ...V().quality, [p.identity]: QUALITY[q] } });
     })
+    .on(RoomEvent.SignalReconnecting, () => diag("voice", "signal reconnecting"))
     .on(RoomEvent.Reconnecting, () => {
+      diag("voice", "reconnecting");
       setV({ state: "reconnecting" });
       watchAlone(); // a broken connection is not an empty call
     })
     .on(RoomEvent.Reconnected, () => {
+      diag("voice", "reconnected");
       setV({ state: "connected" });
       gw.voiceSync(V().channelId);
       reportSelf();
       watchAlone();
     })
-    .on(RoomEvent.AudioPlaybackStatusChanged, () => setV({ needsAudioUnlock: !r.canPlaybackAudio }))
+    .on(RoomEvent.AudioPlaybackStatusChanged, () => {
+      diag("voice", "playback", { allowed: r.canPlaybackAudio });
+      setV({ needsAudioUnlock: !r.canPlaybackAudio });
+    })
+    .on(RoomEvent.TrackSubscriptionFailed, (sid, p, err) => diag("voice", "subscription failed", { sid, who: p?.identity, err: String(err ?? "") }))
+    .on(RoomEvent.MediaDevicesError, (e) => diagError("device", e))
+    .on(RoomEvent.ActiveDeviceChanged, (kind, id) => diag("device", "active device", { kind, id }))
     .on(RoomEvent.DataReceived, (payload, p) => {
       try {
         const msg = JSON.parse(new TextDecoder().decode(payload)) as { t: string; e?: string } & Partial<ClipMessage>;
@@ -456,7 +474,10 @@ function wire(r: Room) {
         /* not ours */
       }
     })
-    .on(RoomEvent.Disconnected, (reason?: DisconnectReason) => void onDisconnected(reason));
+    .on(RoomEvent.Disconnected, (reason?: DisconnectReason) => {
+      diag("voice", "disconnected", { reason: reason == null ? null : (DisconnectReason[reason] ?? reason), intentional });
+      void onDisconnected(reason);
+    });
 }
 
 async function onDisconnected(reason?: DisconnectReason) {
@@ -478,12 +499,15 @@ async function onDisconnected(reason?: DisconnectReason) {
   // rejoin a few times with backoff before giving up.
   if (channelId && rejoinTries < 4) {
     rejoinTries++;
+    diag("voice", "will rejoin", { attempt: rejoinTries });
     setV({ state: "reconnecting", channelId });
     setTimeout(() => {
       if (V().channelId === channelId && !intentional) void joinVoice(channelId, true);
     }, 1000 * rejoinTries * rejoinTries);
     return;
   }
+  diag("voice", "gave up rejoining");
+  void flushDiag();
   setV({ state: "failed" });
 }
 
@@ -509,10 +533,13 @@ export async function joinVoice(channelId: string, isRejoin = false) {
     stayAlone = false;
   }
   setV({ channelId, state: isRejoin ? "reconnecting" : "connecting", joinedAt: isRejoin ? V().joinedAt : Date.now(), deafened: isRejoin ? V().deafened : false, muted: isRejoin ? V().muted : settings().joinMuted || V().muted });
+  diag("voice", isRejoin ? "rejoin" : "join", { channelId });
+  const started = Date.now();
   let join: { url: string | null; token: string };
   try {
     join = await api("/api/voice/join", { method: "POST", body: { channelId, selfMute: V().muted, selfDeaf: V().deafened } });
   } catch (e) {
+    diagError("voice", e, { step: "join request" });
     const err = e as ApiError;
     if (isRejoin && err.isNetwork) return void onDisconnected();
     setV({ state: "idle", channelId: null });
@@ -542,6 +569,7 @@ export async function joinVoice(channelId: string, isRejoin = false) {
     syncSubscriptions();
   } catch (e) {
     console.warn("[voice] connect failed", e);
+    diagError("voice", e, { step: "connect", ms: Date.now() - started });
     if (room === r) {
       cleanup();
       if (isRejoin) return void onDisconnected();
@@ -552,6 +580,7 @@ export async function joinVoice(channelId: string, isRejoin = false) {
   }
   if (room !== r) return; // left meanwhile
   rejoinTries = 0;
+  diag("voice", "connected", { ms: Date.now() - started, others: r.remoteParticipants.size, playback: r.canPlaybackAudio });
   setV({ state: "connected", needsAudioUnlock: !r.canPlaybackAudio });
   if (!isRejoin) playSound("connect");
   await publishMic();
@@ -568,8 +597,10 @@ export async function leaveVoice(silent = false) {
   const r = room;
   const was = V().channelId;
   setV({ channelId: null, state: "idle", joinedAt: null });
+  if (was) diag("voice", "leave", { silent });
   if (r) await r.disconnect(true).catch(() => {});
   cleanup();
+  if (was) void flushDiag();
   if (was) gw.voiceSync(null);
   if (was && !silent) playSound("disconnect");
   if (isAndroid) void import("../../lib/android").then((m) => m.stopScreenCapture()).catch(() => {});

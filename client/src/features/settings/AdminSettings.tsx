@@ -520,6 +520,74 @@ export function AdminUsers() {
 }
 
 // ── servers ──────────────────────────────────────────────────────────────────
+interface DiagFile {
+  userId: string;
+  name: string;
+  size: number;
+  updatedAt: string;
+}
+
+/** The apps' diagnostic logs: what happened in calls and connections on each person's device. */
+export function AdminLogs() {
+  const { list, error } = useLatestList<DiagFile>("/api/admin/diag", {});
+  const [copiedId, setCopiedId] = useState<string | null>(null);
+  const fetchLog = async (f: DiagFile) => {
+    try {
+      return (await api<{ text: string }>(`/api/admin/diag/${f.userId}`)).text;
+    } catch (e) {
+      toast(errorText(e), "error");
+      return null;
+    }
+  };
+  const download = async (f: DiagFile) => {
+    const text = await fetchLog(f);
+    if (text == null) return;
+    const url = URL.createObjectURL(new Blob([text], { type: "text/plain;charset=utf-8" }));
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `nova-log-${f.name.replace(/[^p{L}p{N}_-]+/gu, "_")}-${f.updatedAt.slice(0, 10)}.txt`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 10_000);
+  };
+  const copy = async (f: DiagFile) => {
+    const text = await fetchLog(f);
+    if (text == null) return;
+    await navigator.clipboard?.writeText(text).catch(() => {});
+    setCopiedId(f.userId);
+    setTimeout(() => setCopiedId((id) => (id === f.userId ? null : id)), 1400);
+  };
+  return (
+    <>
+      <SectionTitle sub={t("admin.logsHint")}>{t("admin.logs")}</SectionTitle>
+      {error && <p className="mb-3 text-[14px] text-bad">{error}</p>}
+      {!list && !error && <Spinner />}
+      {list && !list.length && <p className="py-6 text-center text-[14px] text-fg-3">{t("admin.noLogs")}</p>}
+      <div className="flex flex-col" data-admin-logs>
+        {(list ?? []).map((f) => (
+          <div key={f.userId} data-log={f.name} className="flex flex-wrap items-center gap-x-3 gap-y-2 border-b border-line/8 py-2.5">
+            <div className="min-w-0 flex-1 basis-40">
+              <div className="truncate font-semibold">{f.name}</div>
+              <div className="truncate text-[12.5px] text-fg-3">
+                {formatBytes(f.size)} · {fmtRelative(f.updatedAt)}
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <Button size="sm" variant="secondary" onClick={() => void copy(f)}>
+                {copiedId === f.userId ? t("common.copied") : t("admin.logCopy")}
+              </Button>
+              <Button size="sm" variant="secondary" onClick={() => void download(f)}>
+                {t("admin.logDownload")}
+              </Button>
+            </div>
+          </div>
+        ))}
+      </div>
+    </>
+  );
+}
+
 export function AdminGuilds() {
   const { list, error, reload } = useLatestList<AdminGuildDTO>("/api/admin/guilds", {});
   const [q, setQ] = useState("");

@@ -56,4 +56,5 @@ export const limits = {
   voiceJoin: new RateLimiter(10, 0.5),
   presence: new RateLimiter(10, 0.5),
   search: new RateLimiter(10, 1),
+  diag: new RateLimiter(6, 0.05),
 };

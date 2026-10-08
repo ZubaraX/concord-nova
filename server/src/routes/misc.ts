@@ -1,10 +1,12 @@
-// Invites (public preview + accept) and the Android push stream.
+// Invites (public preview + accept), the Android push stream, and the apps' diagnostic logs.
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
 import { authenticate, signPushToken, verifyPushToken } from "../lib/auth";
 import { parse, unauthorized } from "../lib/errors";
 import { acceptInvite, deleteInvite, getInvite } from "../services/invites";
 import { addPushStream } from "../services/push";
+import { appendDiag } from "../services/diag";
+import { limits } from "../lib/rate";
 import { voice } from "../state/voice";
 
 const codeParam = z.object({ code: z.string().regex(/^[A-Za-z0-9-]{2,32}$/) });
@@ -15,6 +17,16 @@ export async function inviteRoutes(app: FastifyInstance) {
   app.delete("/:code", { preHandler: authenticate }, async (req, reply) => {
     await deleteInvite(req.auth.userId, parse(codeParam, req.params).code);
     return reply.code(204).send();
+  });
+}
+
+/** The apps send what happened in calls and connections, for the admins to look into problems. */
+export async function diagRoutes(app: FastifyInstance) {
+  app.post("/", { preHandler: authenticate, bodyLimit: 512 * 1024 }, async (req) => {
+    limits.diag.consume(req.auth.userId);
+    const body = parse(z.object({ client: z.string().max(160), lines: z.array(z.string().max(1000)).min(1).max(500) }), req.body);
+    await appendDiag(req.auth.userId, body.client, body.lines);
+    return { ok: true };
   });
 }
 

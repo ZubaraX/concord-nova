@@ -15,7 +15,7 @@ import { guildRoutes } from "./routes/guilds";
 import { channelRoutes } from "./routes/channels";
 import { fileRoutes } from "./routes/files";
 import { voiceRoutes } from "./routes/voice";
-import { inviteRoutes, pushRoutes } from "./routes/misc";
+import { diagRoutes, inviteRoutes, pushRoutes } from "./routes/misc";
 import { adminRoutes } from "./routes/admin";
 import { expressionRoutes } from "./routes/expressions";
 
@@ -70,6 +70,7 @@ export async function buildApp(opts: { logger?: boolean | object } = {}): Promis
   await app.register(inviteRoutes, { prefix: "/api/invites" });
   await app.register(voiceRoutes, { prefix: "/api/voice" });
   await app.register(pushRoutes, { prefix: "/api/push" });
+  await app.register(diagRoutes, { prefix: "/api/diag" });
   await app.register(adminRoutes, { prefix: "/api/admin" });
   await app.register(fileRoutes);
   await app.register(expressionRoutes);

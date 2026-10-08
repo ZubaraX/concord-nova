@@ -230,8 +230,12 @@ test("soundboard: drag a sound of yours onto the server and a server's into your
   // Reorder yours: drop "серверный" onto "первый" → it goes first, and stays so on another device.
   await mine.locator("[data-sound]").filter({ hasText: "серверный" }).dragTo(mine.locator("[data-sound]").filter({ hasText: "первый" }));
   await expect.poll(async () => (await names(mine)).map((s) => s.trim().split("\n").pop())).toEqual(["серверный", "первый", "второй"]);
-  const list = await (await request.get(`${BASE}/api/expressions`, { headers: { authorization: `Bearer ${bob.access}` } })).json();
-  expect(list.sounds.filter((s: { guildId: string | null }) => !s.guildId).sort((a: { position: number }, c: { position: number }) => a.position - c.position).map((s: { name: string }) => s.name)).toEqual(["серверный", "первый", "второй"]);
+  // The screen moves at once; the server gets the order a moment later.
+  const saved = async () => {
+    const list = await (await request.get(`${BASE}/api/expressions`, { headers: { authorization: `Bearer ${bob.access}` } })).json();
+    return list.sounds.filter((s: { guildId: string | null }) => !s.guildId).sort((a: { position: number }, c: { position: number }) => a.position - c.position).map((s: { name: string }) => s.name);
+  };
+  await expect.poll(saved).toEqual(["серверный", "первый", "второй"]);
 
   // The menu does the same without dragging.
   await mine.locator("[data-sound]").filter({ hasText: "второй" }).click({ button: "right" });

@@ -114,3 +114,39 @@ test("password-reset mail: set up in the app; without it the sign-in screen says
     await api(request, admin, "DELETE", "/api/admin/mail");
   }
 });
+
+test("diagnostic logs: a call is logged on the device, sent after it, and the admin can read it", async ({ browser, request }) => {
+  test.skip(!!process.env.E2E_URL, "grants admin rights through the local database");
+  const admin = await register(request, `Админ ${run}`);
+  const user = await register(request, `Звонящий ${run}`);
+  grantAdmin(admin);
+  const { guild, voice } = await guildWith(request, user, []);
+
+  // A call, then leaving it: the log goes to the server.
+  const u = await openAs(browser, user, `/#/channels/${guild.id}/${voice.id}`, { local: { noise: "off" } });
+  await u.page.getByRole("button", { name: "Зайти в канал" }).click();
+  // Connected, with the (fake) microphone on: own voice shows on the tile.
+  await expect(u.page.locator(`[data-user="${user.id}"] [data-speaking="true"]`)).toBeVisible({ timeout: 20_000 });
+  await u.page.getByRole("button", { name: "Отключиться" }).first().click();
+
+  // Users can copy their own log too.
+  await u.page.getByRole("button", { name: "Настройки" }).last().click();
+  await u.page.locator("[data-settings] nav").getByRole("button", { name: "Расширенные", exact: true }).click();
+  await expect(u.page.locator("[data-diag-log]")).toBeVisible();
+
+  // Only admins can read the logs.
+  expect((await request.get(`${BASE}/api/admin/diag`, { headers: { authorization: `Bearer ${user.access}` } })).status()).toBe(403);
+  const a = await openAs(browser, admin);
+  await a.page.getByRole("button", { name: "Настройки" }).last().click();
+  await a.page.locator("[data-settings] nav").getByRole("button", { name: "Журналы", exact: true }).click();
+  await expect(a.page.locator(`[data-log="${user.displayName}"]`)).toBeVisible();
+  const log = (await (await request.get(`${BASE}/api/admin/diag/${user.id}`, { headers: { authorization: `Bearer ${admin.access}` } })).json()) as { text: string };
+  expect(log.text).toMatch(/\[voice\] join/);
+  expect(log.text).toMatch(/\[voice\] connected/);
+  expect(log.text).toMatch(/\[mic\] on/);
+  expect(log.text).toMatch(/\[voice\] leave/);
+  expect(log.text).toMatch(/Nova \d+\.\d+\.\d+/);
+  noErrors(u, a);
+  await u.context.close();
+  await a.context.close();
+});

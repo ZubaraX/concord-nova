@@ -18,7 +18,8 @@ import { comboOf, customThemeVars, globalShortcutMap, settings, useSettings, typ
 import { AvatarDecoration, Backdrop, BACKDROPS, DECORATIONS } from "../../components/ui/cosmetics";
 import { ColorButton } from "../../components/ui/ColorPicker";
 import { useCustomWallpaper } from "../chat/Wallpaper";
-import { Button, Input, Textarea, Switch, SettingRow, Slider, Segmented, Field, Kbd } from "../../components/ui/primitives";
+import { Button, Input, Textarea, Switch, SettingRow, Slider, Segmented, Field, Kbd, useCopy } from "../../components/ui/primitives";
+import { diagText, flushDiag } from "../../lib/diag";
 import { UserAvatar } from "../../components/ui/avatar";
 import { Markdown } from "../chat/markdown";
 import { startMicTest } from "../voice/processor";
@@ -27,9 +28,9 @@ import { SoundboardPanel } from "../voice/Soundboard";
 import { holdMicForTest, useVoice } from "../voice/voice";
 import { Modal, ModalFooter, ModalHeader } from "../../components/ui/overlay";
 import { SettingsLayout, SectionTitle, Group } from "./SettingsLayout";
-import { AdminGuilds, AdminOverview, AdminUsers } from "./AdminSettings";
+import { AdminGuilds, AdminLogs, AdminOverview, AdminUsers } from "./AdminSettings";
 
-type Tab = "account" | "profile" | "appearance" | "voice" | "notifications" | "keybinds" | "sessions" | "language" | "advanced" | "desktop" | "about" | "admin-overview" | "admin-users" | "admin-guilds";
+type Tab = "account" | "profile" | "appearance" | "voice" | "notifications" | "keybinds" | "sessions" | "language" | "advanced" | "desktop" | "about" | "admin-overview" | "admin-users" | "admin-guilds" | "admin-logs";
 
 export default function UserSettings({ tab: initial, onClose }: { tab?: string; onClose: () => void }) {
   const [tab, setTab] = useState<Tab | null>((initial as Tab) ?? (window.innerWidth < 768 ? null : "account"));
@@ -65,6 +66,7 @@ export default function UserSettings({ tab: initial, onClose }: { tab?: string; 
               { id: "admin-overview", label: t("admin.overview") },
               { id: "admin-users", label: t("admin.users") },
               { id: "admin-guilds", label: t("admin.guilds") },
+              { id: "admin-logs", label: t("admin.logs") },
             ],
           },
         ]
@@ -96,6 +98,7 @@ export default function UserSettings({ tab: initial, onClose }: { tab?: string; 
       {admin && tab === "admin-overview" && <AdminOverview />}
       {admin && tab === "admin-users" && <AdminUsers />}
       {admin && tab === "admin-guilds" && <AdminGuilds />}
+      {admin && tab === "admin-logs" && <AdminLogs />}
     </SettingsLayout>
   );
 }
@@ -1059,7 +1062,38 @@ function Advanced() {
           <Switch checked={dev} onChange={(v) => settings().setSynced({ developerMode: v })} />
         </SettingRow>
       </Group>
+      <DiagLog />
     </>
+  );
+}
+
+/** The diagnostic log of this device: copy it, or send it to the server now. */
+function DiagLog() {
+  const [copied, copy] = useCopy();
+  const [sending, setSending] = useState(false);
+  return (
+    <Group>
+      <SettingRow title={t("settings.diagLog")} hint={t("settings.diagLogHint")}>
+        <div className="flex flex-wrap gap-2" data-diag-log>
+          <Button size="sm" variant="secondary" onClick={() => copy(diagText())}>
+            {copied ? t("common.copied") : t("settings.diagCopy")}
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={sending}
+            onClick={async () => {
+              setSending(true);
+              await flushDiag();
+              setSending(false);
+              toast(t("settings.diagSent"));
+            }}
+          >
+            {t("settings.diagSend")}
+          </Button>
+        </div>
+      </SettingRow>
+    </Group>
   );
 }
 

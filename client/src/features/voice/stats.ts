@@ -4,6 +4,7 @@
 import { create } from "zustand";
 import type { Track } from "livekit-client";
 import { getRoom, useVoice } from "./voice";
+import { diag } from "../../lib/diag";
 
 export interface CallSample {
   /** epoch ms */
@@ -133,6 +134,7 @@ async function tick() {
       downKbps: rate(c.bytesIn, p?.bytesIn ?? 0),
     };
     prev = c;
+    noteForLog(sample, route);
     const keep = c.at - WINDOW_MS - 2000;
     useCallStats.setState((s) => ({ samples: [...s.samples.filter((x) => x.at > keep), sample], route }));
   } finally {
@@ -140,8 +142,25 @@ async function tick() {
   }
 }
 
+// For the diagnostic log: the route when it changes, and a bad second now and then (not every one).
+let lastRoute = "";
+let lastBad = 0;
+function noteForLog(s: CallSample, route: CallRoute) {
+  const r = `${route.type}/${route.protocol}/${route.codec}`;
+  if (route.type && r !== lastRoute) {
+    lastRoute = r;
+    diag("net", "route", { ...route, ping: s.ping });
+  }
+  const bad = (s.loss ?? 0) >= 5 || (s.ping ?? 0) >= 300 || (s.jitter ?? 0) >= 50;
+  if (bad && s.at - lastBad > 20_000) {
+    lastBad = s.at;
+    diag("net", "bad connection", { ping: s.ping, loss: s.loss == null ? null : Math.round(s.loss * 10) / 10, jitter: s.jitter, up: s.upKbps, down: s.downKbps });
+  }
+}
+
 function start() {
   stop();
+  lastRoute = "";
   useCallStats.setState({ samples: [], route: { type: null, protocol: null, codec: null, codecKhz: null } });
   timer = setInterval(() => void tick(), 1000);
 }
