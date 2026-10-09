@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import clsx from "clsx";
 import { useShallow } from "zustand/react/shallow";
-import { ExternalLink, ListMusic, Pause, Play, Plus, SkipForward, Upload, X } from "lucide-react";
+import { ExternalLink, FolderOpen, ListMusic, Pause, Play, Plus, SkipForward, Upload, X } from "lucide-react";
 import { t } from "../../lib/i18n";
 import { isDesktop } from "../../lib/platform";
 import { displayName, useData } from "../../store/data";
@@ -11,7 +11,8 @@ import { settings, useSettings } from "../../store/settings";
 import { Popover, Tooltip, usePopover } from "../../components/ui/overlay";
 import { Slider } from "../../components/ui/primitives";
 import { useVoice } from "./voice";
-import { addFiles, addLink, myFile, pause, removeItem, resume, serverNow, skip, useRadio } from "./radio";
+import { addFiles, addFolder, addLink, myFile, pause, removeItem, resume, serverNow, skip, useRadio } from "./radio";
+import { yandexEmbed } from "./musicLinks";
 import { useRadioFiles } from "./radioFiles";
 
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
@@ -41,6 +42,7 @@ export function RadioPanel({ channelId }: { channelId: string }) {
   const [link, setLink] = useState("");
   const [drop, setDrop] = useState(false);
   const file = useRef<HTMLInputElement>(null);
+  const folder = useRef<HTMLInputElement>(null);
   const [, tick] = useState(0);
   useEffect(() => {
     const id = setInterval(() => tick((n) => n + 1), 1000);
@@ -129,10 +131,17 @@ export function RadioPanel({ channelId }: { channelId: string }) {
         </div>
       )}
 
-      <input ref={file} type="file" accept="audio/*" multiple hidden onChange={(e) => (void addFiles(channelId, [...(e.target.files ?? [])]), (e.target.value = ""))} />
-      <button onClick={() => file.current?.click()} className="flex items-center justify-center gap-2 rounded-xl bg-raised py-2 text-[13.5px] font-semibold hover:bg-overlay">
-        <Upload size={16} /> {t("radio.addFiles")}
-      </button>
+      <input ref={file} type="file" accept="audio/*,.m3u,.m3u8,.pls" multiple hidden onChange={(e) => (void addFiles(channelId, [...(e.target.files ?? [])]), (e.target.value = ""))} />
+      {/* A folder of music: everything audio in it, in name order. */}
+      <input ref={folder} type="file" multiple hidden {...{ webkitdirectory: "" }} onChange={(e) => (void addFolder(channelId, [...(e.target.files ?? [])]), (e.target.value = ""))} />
+      <div className="flex gap-2">
+        <button onClick={() => file.current?.click()} className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-raised py-2 text-[13.5px] font-semibold hover:bg-overlay">
+          <Upload size={16} /> {t("radio.addFiles")}
+        </button>
+        <button onClick={() => folder.current?.click()} className="flex flex-1 items-center justify-center gap-2 rounded-xl bg-raised py-2 text-[13.5px] font-semibold hover:bg-overlay">
+          <FolderOpen size={16} /> {t("radio.addFolder")}
+        </button>
+      </div>
       <form
         className="flex gap-2"
         onSubmit={(e) => {
@@ -150,13 +159,31 @@ export function RadioPanel({ channelId }: { channelId: string }) {
       {st && st.links.length > 0 && (
         <div className="flex flex-col gap-1">
           <div className="text-[11.5px] font-semibold text-fg-3">{t("radio.shared")}</div>
-          {st.links.slice().reverse().map((l) => (
-            <button key={l.id} data-radio-link onClick={() => (isDesktop ? window.nova!.openExternal(l.url) : window.open(l.url, "_blank"))} className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] hover:bg-raised">
-              <ExternalLink size={14} className="shrink-0 text-fg-3" />
-              <span className="min-w-0 flex-1 truncate">{l.title ?? l.url}</span>
-              <span className="shrink-0 text-[11.5px] text-sky">{t(`radio.openIn.${l.service}`)}</span>
-            </button>
-          ))}
+          {st.links.slice().reverse().map((l) => {
+            const embed = l.service === "yandex" ? yandexEmbed(l.url) : null;
+            // Yandex: its own player, which each person plays on their device with their own account.
+            if (embed)
+              return (
+                <div key={l.id} data-radio-link className="flex flex-col gap-1">
+                  <iframe
+                    src={embed.src}
+                    title={l.title ?? l.url}
+                    allow="clipboard-write; autoplay; encrypted-media"
+                    className="w-full rounded-lg border-0 bg-canvas"
+                    style={{ height: embed.height }}
+                  />
+                  <span className="text-[11px] text-fg-3">{t("radio.yandexHint")}</span>
+                </div>
+              );
+            const music = isDesktop && !!window.nova?.openMusic;
+            return (
+              <button key={l.id} data-radio-link onClick={() => openMusicLink(l.url)} className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-left text-[13px] hover:bg-raised">
+                <ExternalLink size={14} className="shrink-0 text-fg-3" />
+                <span className="min-w-0 flex-1 truncate">{l.title ?? l.url}</span>
+                <span className="shrink-0 text-[11.5px] text-sky">{music ? t("radio.listenHere") : t(`radio.openIn.${l.service}`)}</span>
+              </button>
+            );
+          })}
         </div>
       )}
       <p className="text-[11.5px] leading-snug text-fg-3">{t("radio.hint")}</p>
@@ -164,16 +191,24 @@ export function RadioPanel({ channelId }: { channelId: string }) {
   );
 }
 
+/** VK / Yandex Music: the desktop app's music window (signed in there once), else the browser or their app. */
+function openMusicLink(url: string) {
+  if (isDesktop && window.nova?.openMusic) window.nova.openMusic(url);
+  else if (isDesktop) window.nova!.openExternal(url);
+  else window.open(url, "_blank");
+}
+
 /** "🎵 title" under a voice channel where the radio plays. */
 export function RadioLine({ channelId }: { channelId: string }) {
-  const title = useRadio((s) => {
+  const line = useRadio((s) => {
     const st = s.states[channelId];
-    return st?.current ? st.items[0]?.title : undefined;
+    if (st?.station) return `📻 ${st.station.name}`;
+    return st?.current ? `🎵 ${st.items[0]?.title ?? ""}` : undefined;
   });
-  if (!title) return null;
+  if (!line) return null;
   return (
     <div data-radio-now className="ml-6 truncate text-[12px] text-fg-3">
-      🎵 {title}
+      {line}
     </div>
   );
 }

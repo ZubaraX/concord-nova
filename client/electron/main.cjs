@@ -337,6 +337,51 @@ ipcMain.on("win:close", () => win?.close());
 ipcMain.on("win:isMaximized", (e) => (e.returnValue = !!win?.isMaximized()));
 ipcMain.on("app:version", (e) => (e.returnValue = app.getVersion()));
 ipcMain.on("open-external", (_e, url) => /^https?:/i.test(url) && void shell.openExternal(url));
+
+// ── the music window (VK Music, Yandex Music) ────────────────────────────────
+// A small window of its own for the music services' sites: you sign in there
+// once (its own saved session, apart from the app) and listen yourself. Only
+// those sites and their sign-in pages open in it; any other link goes to the
+// system browser.
+const MUSIC_HOSTS = /^(?:[\w-]+\.)*(?:vk\.com|vk\.ru|vkvideo\.ru|music\.yandex\.(?:ru|com|by|kz|uz)|passport\.yandex\.(?:ru|com|by|kz|uz))$/i;
+const musicUrlAllowed = (url) => {
+  try {
+    const u = new URL(url);
+    return u.protocol === "https:" && MUSIC_HOSTS.test(u.hostname);
+  } catch {
+    return false;
+  }
+};
+let musicWin = null;
+ipcMain.on("music:open", (_e, url) => {
+  if (!musicUrlAllowed(url)) return;
+  if (musicWin && !musicWin.isDestroyed()) {
+    void musicWin.loadURL(url);
+    musicWin.show();
+    musicWin.focus();
+    return;
+  }
+  musicWin = new BrowserWindow({
+    width: 460,
+    height: 760,
+    title: "Музыка",
+    autoHideMenuBar: true,
+    backgroundColor: "#0b0d17",
+    webPreferences: { partition: "persist:music", sandbox: true, contextIsolation: true, nodeIntegration: false },
+  });
+  musicWin.webContents.setWindowOpenHandler(({ url: next }) => {
+    if (musicUrlAllowed(next)) void musicWin?.loadURL(next);
+    else if (/^https?:/i.test(next)) void shell.openExternal(next);
+    return { action: "deny" };
+  });
+  musicWin.webContents.on("will-navigate", (e, next) => {
+    if (musicUrlAllowed(next)) return;
+    e.preventDefault();
+    if (/^https?:/i.test(next)) void shell.openExternal(next);
+  });
+  musicWin.on("closed", () => (musicWin = null));
+  void musicWin.loadURL(url);
+});
 ipcMain.on("close-to-tray", (_e, on) => (closeToTray = !!on));
 ipcMain.on("autolaunch", (_e, on) => app.setLoginItemSettings({ openAtLogin: !!on, args: ["--hidden"] }));
 

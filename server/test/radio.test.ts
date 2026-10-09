@@ -116,3 +116,47 @@ describe("RadioManager", () => {
     expect(sent.at(-1)).toMatchObject({ channelId: "c", serverNow: now() });
   });
 });
+
+describe("RadioManager — FM station", () => {
+  const europa = { name: "Европа Плюс", url: "http://ep256.hostingradio.ru:8052/europaplus256.mp3", play: "/api/radio/relay?u=x&s=y", favicon: null };
+  it("a station plays at once and pauses the music; turning it off brings the music back where it was", () => {
+    const { m, advance, now } = make();
+    m.add("c", "a", song("A", 100));
+    advance(20_000);
+    m.setStation("c", "b", europa);
+    expect(m.state("c").station).toMatchObject({ name: "Европа Плюс", startedBy: "b" });
+    expect(m.state("c").current?.pausedAt).toBe(20_000);
+    advance(300_000); // the music doesn't move on under the station
+    expect(m.state("c").current?.itemId).toBe("id1");
+    m.clearStation("c");
+    expect(m.state("c").station).toBeNull();
+    expect(m.state("c").current).toEqual({ itemId: "id1", startedAt: now() - 20_000, pausedAt: null });
+  });
+
+  it("music someone paused themselves stays paused after the station", () => {
+    const { m } = make();
+    m.add("c", "a", song("A", 100));
+    m.pause("c");
+    m.setStation("c", "b", europa);
+    m.clearStation("c");
+    expect(m.state("c").current?.pausedAt).not.toBeNull();
+  });
+
+  it("a track starting while the station plays waits, paused at its start", () => {
+    const { m } = make();
+    m.setStation("c", "b", europa);
+    m.add("c", "a", song("A", 100));
+    expect(m.state("c").current).toMatchObject({ itemId: "id1", pausedAt: 0 });
+    m.clearStation("c");
+    expect(m.state("c").current?.pausedAt).toBeNull();
+  });
+
+  it("another station replaces the first; the last one leaving ends it too", () => {
+    const { m } = make();
+    m.setStation("c", "b", europa);
+    m.setStation("c", "a", { ...europa, name: "Ретро FM" });
+    expect(m.state("c").station?.name).toBe("Ретро FM");
+    m.onLeave("c", "a", 0);
+    expect(m.state("c").station).toBeNull();
+  });
+});

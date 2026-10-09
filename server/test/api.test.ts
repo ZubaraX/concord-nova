@@ -863,6 +863,52 @@ describe("radio", () => {
     expect((await api<{ items: unknown[] }>("GET", `/api/channels/${ch}/radio`, dj.token)).body.items).toEqual([]);
   });
 
+  it("FM: a station plays for the call (an http one through the relay); off again; the relay only opens signed addresses", async () => {
+    const host = await register("fmhost");
+    const guest = await register("fmguest");
+    const g = await api<GuildCreatePayload>("POST", "/api/guilds", host.token, { name: "Эфир", template: "default", locale: "ru" });
+    const inv = await api<{ code: string }>("POST", `/api/guilds/${g.body.id}/invites`, host.token, { maxAge: 0, maxUses: 0 });
+    await api("POST", `/api/invites/${inv.body.code}`, guest.token);
+    const ch = g.body.channels.find((c) => c.type === "voice")!.id;
+    const { voice } = await import("../src/state/voice");
+    await voice.onJoin(host.id, ch, "sid-fmhost");
+    await voice.onJoin(guest.id, ch, "sid-fmguest");
+
+    // A tiny "station" on this machine: an endless trickle of mp3-ish bytes.
+    const { createServer } = await import("node:http");
+    const station = createServer((_req, res) => {
+      res.writeHead(200, { "content-type": "audio/mpeg" });
+      const t = setInterval(() => res.write(Buffer.alloc(512, 7)), 20);
+      res.on("close", () => clearInterval(t));
+    });
+    await new Promise<void>((r) => station.listen(0, "127.0.0.1", r));
+    const stationUrl = `http://127.0.0.1:${(station.address() as AddressInfo).port}/live.mp3`;
+
+    const on = await api<{ station: { name: string; play: string; startedBy: string } | null }>("POST", `/api/channels/${ch}/radio/station`, guest.token, { name: "Тест FM", url: stationUrl });
+    expect(on.status, JSON.stringify(on.body)).toBe(200);
+    expect(on.body.station).toMatchObject({ name: "Тест FM", startedBy: guest.id });
+    expect(on.body.station!.play.startsWith("/api/radio/relay?u=")).toBe(true);
+
+    // The relay passes the stream on (no auth: an audio element can't send one — the signature is the key).
+    const ctl = new AbortController();
+    const relayed = await fetch(base + on.body.station!.play, { signal: ctl.signal });
+    expect(relayed.status).toBe(200);
+    expect(relayed.headers.get("content-type")?.startsWith("audio/")).toBe(true);
+    const reader = relayed.body!.getReader();
+    let got = 0;
+    while (got < 2048) got += (await reader.read()).value?.length ?? 0;
+    ctl.abort();
+    station.close();
+    // Not signed by this server: no relay.
+    const forged = `/api/radio/relay?u=${Buffer.from("http://example.com/x.mp3").toString("base64url")}&s=AAAAAAAAAAAAAAAAAAAAAA`;
+    expect((await fetch(base + forged)).status).toBe(403);
+
+    const off = await api<{ station: unknown }>("DELETE", `/api/channels/${ch}/radio/station`, host.token);
+    expect(off.body.station).toBeNull();
+    await voice.onLeave(guest.id, ch);
+    await voice.onLeave(host.id, ch);
+  });
+
   it("a server mute covers the radio: no adding, skipping or pausing", async () => {
     const mod = await register("radiomod");
     const loud = await register("radioloud");

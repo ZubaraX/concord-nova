@@ -73,6 +73,8 @@ export interface LocalSettings {
   streamInfo: boolean;
   /** How loud the call's radio plays for you, 0–100. */
   radioVolume: number;
+  /** How loud the call's FM station plays for you, 0–100. */
+  fmVolume: number;
   joinMuted: boolean;
   userVolumes: Record<string, number>;
   streamVolumes: Record<string, number>;
@@ -162,6 +164,7 @@ const LOCAL_DEFAULTS: LocalSettings = {
   screenCustom: { height: 1080, fps: 60, bitrateKbps: 12_000, codec: "h264", mode: "balanced" },
   streamInfo: false,
   radioVolume: 60,
+  fmVolume: 60,
   joinMuted: false,
   userVolumes: {},
   streamVolumes: {},

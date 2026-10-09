@@ -1,7 +1,8 @@
-// The radio of each voice channel: the queue, what plays since when, and the
-// shared Yandex/VK links. Only this, in memory — the files themselves go from
-// the adder's app to the others through the call, never through here.
-import { RADIO_MAX_ITEMS, RADIO_MAX_LINKS, ulid, type RadioCurrentDTO, type RadioItemDTO, type RadioLinkDTO, type RadioStateDTO } from "@nova/shared";
+// The radio of each voice channel: the queue, what plays since when, the FM
+// station if one is on, and the shared Yandex/VK links. Only this, in memory —
+// the files themselves go from the adder's app to the others through the call,
+// never through here.
+import { RADIO_MAX_ITEMS, RADIO_MAX_LINKS, ulid, type RadioCurrentDTO, type RadioItemDTO, type RadioLinkDTO, type RadioStateDTO, type RadioStationDTO } from "@nova/shared";
 import { badRequest, forbidden, notFound } from "../lib/errors";
 import { toChannel } from "../gateway/io";
 
@@ -13,6 +14,10 @@ interface Station {
   current: RadioCurrentDTO | null;
   links: RadioLinkDTO[];
   timer: unknown;
+  /** The FM station on: it plays instead of the queue. */
+  fm: RadioStationDTO | null;
+  /** The queue was paused by the station (and goes on when it's turned off). */
+  heldByFm: boolean;
 }
 
 export interface RadioDeps {
@@ -29,7 +34,30 @@ export class RadioManager {
 
   state(channelId: string): RadioStateDTO {
     const s = this.stations.get(channelId);
-    return { channelId, items: s?.items ?? [], current: s?.current ?? null, links: s?.links ?? [], serverNow: this.deps.now() };
+    return { channelId, items: s?.items ?? [], current: s?.current ?? null, links: s?.links ?? [], station: s?.fm ?? null, serverNow: this.deps.now() };
+  }
+
+  /** Turns an FM station on (or switches to another): the music waits, paused where it was. */
+  setStation(channelId: string, userId: string, input: { name: string; url: string; play: string; favicon: string | null }) {
+    const s = this.station(channelId);
+    if (s.current && s.current.pausedAt === null) {
+      this.pause(channelId, false);
+      s.heldByFm = true;
+    }
+    s.fm = { ...input, startedBy: userId, startedAt: this.deps.now() };
+    this.send(channelId);
+  }
+
+  /** Turns the station off: music the station paused goes on. */
+  clearStation(channelId: string) {
+    const s = this.stations.get(channelId);
+    if (!s?.fm) return;
+    s.fm = null;
+    if (s.heldByFm) {
+      s.heldByFm = false;
+      this.resume(channelId, false);
+    }
+    this.send(channelId);
   }
 
   add(channelId: string, userId: string, input: { kind: "file" | "link"; title: string; duration: number; url?: string }): RadioItemDTO {
@@ -66,20 +94,21 @@ export class RadioManager {
     if (s?.current?.itemId === itemId) this.next(channelId, s);
   }
 
-  pause(channelId: string) {
+  pause(channelId: string, send = true) {
     const s = this.stations.get(channelId);
     if (!s?.current || s.current.pausedAt !== null) return;
     this.deps.clearTimer(s.timer);
     s.current = { ...s.current, pausedAt: this.deps.now() - s.current.startedAt };
-    this.send(channelId);
+    s.heldByFm = false; // paused by someone: stays paused after the station
+    if (send) this.send(channelId);
   }
 
-  resume(channelId: string) {
+  resume(channelId: string, send = true) {
     const s = this.stations.get(channelId);
     if (!s?.current || s.current.pausedAt === null) return;
     s.current = { itemId: s.current.itemId, startedAt: this.deps.now() - s.current.pausedAt, pausedAt: null };
     this.schedule(channelId, s);
-    this.send(channelId);
+    if (send) this.send(channelId);
   }
 
   /** Someone left the call: their tracks that haven't started go; nobody left → the radio goes. */
@@ -100,14 +129,17 @@ export class RadioManager {
 
   private station(channelId: string): Station {
     let s = this.stations.get(channelId);
-    if (!s) this.stations.set(channelId, (s = { items: [], current: null, links: [], timer: null }));
+    if (!s) this.stations.set(channelId, (s = { items: [], current: null, links: [], timer: null, fm: null, heldByFm: false }));
     return s;
   }
 
   private start(channelId: string, s: Station) {
     const first = s.items[0];
-    s.current = first ? { itemId: first.id, startedAt: this.deps.now(), pausedAt: null } : null;
-    if (first) this.schedule(channelId, s);
+    // Under a station a track waits at its start, until the station is turned off.
+    const held = !!first && !!s.fm;
+    s.current = first ? { itemId: first.id, startedAt: this.deps.now(), pausedAt: held ? 0 : null } : null;
+    if (held) s.heldByFm = true;
+    else if (first) this.schedule(channelId, s);
   }
 
   private schedule(channelId: string, s: Station) {

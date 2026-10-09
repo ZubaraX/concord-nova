@@ -537,11 +537,25 @@ export interface RadioCurrentDTO {
   /** Position in ms while paused, else null. */
   pausedAt: number | null;
 }
+/** An FM / internet station playing in the call (live: no end, no position). */
+export interface RadioStationDTO {
+  name: string;
+  /** The station's stream as given. */
+  url: string;
+  /** What players load: the stream itself (https), or the server's relay for an http one. */
+  play: string;
+  /** The station's logo through the image proxy, if any. */
+  favicon: string | null;
+  startedBy: string;
+  startedAt: number;
+}
 export interface RadioStateDTO {
   channelId: string;
   items: RadioItemDTO[];
   current: RadioCurrentDTO | null;
   links: RadioLinkDTO[];
+  /** The FM station on, if any — it plays instead of the queue (which waits, paused). */
+  station: RadioStationDTO | null;
   /** Server clock at sending, for the listeners' offset. */
   serverNow: number;
 }

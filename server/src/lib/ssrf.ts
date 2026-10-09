@@ -161,3 +161,49 @@ function requestOnce(url: URL, timeoutMs: number, maxBytes: number, accept: stri
     req.end();
   });
 }
+
+/**
+ * Opens a public URL as a live stream (an internet radio station), for relaying:
+ * the same rule against private addresses as safeFetch, redirects followed, any
+ * port (stations sit on 8000, 8052…). Nothing is buffered: the caller pipes the
+ * response and destroys it when its listener goes. `allowPrivate` is for tests.
+ */
+export async function openStream(rawUrl: string, opts: { timeoutMs?: number; allowPrivate?: boolean; signal?: AbortSignal } = {}): Promise<http.IncomingMessage> {
+  const { timeoutMs = 10_000, allowPrivate = false } = opts;
+  let url = new URL(rawUrl);
+  for (let hop = 0; hop <= 4; hop++) {
+    if (url.protocol !== "http:" && url.protocol !== "https:") throw new Error("unsupported protocol");
+    const host = url.hostname.replace(/^\[|\]$/g, "");
+    if (!allowPrivate && net.isIP(host) && isPrivateIp(host)) throw new Error("blocked address");
+    const res = await new Promise<http.IncomingMessage>((resolve, reject) => {
+      const mod = url.protocol === "https:" ? https : http;
+      const req = mod.request(url, {
+        method: "GET",
+        lookup: allowPrivate ? undefined : safeLookup,
+        timeout: timeoutMs,
+        signal: opts.signal,
+        headers: { "user-agent": "Mozilla/5.0 (compatible; ConcordNova/1.0; radio)", accept: "audio/*,*/*;q=0.5" },
+      });
+      req.on("response", (r) => {
+        // Once the stream flows, no idle timeout: a station may pause between packets.
+        req.setTimeout(0);
+        resolve(r);
+      });
+      req.on("timeout", () => req.destroy(new Error("timeout")));
+      req.on("error", reject);
+      req.end();
+    });
+    const status = res.statusCode ?? 0;
+    if (status >= 300 && status < 400 && res.headers.location) {
+      res.resume();
+      url = new URL(res.headers.location, url);
+      continue;
+    }
+    if (status < 200 || status >= 300) {
+      res.resume();
+      throw new Error(`upstream ${status}`);
+    }
+    return res;
+  }
+  throw new Error("too many redirects");
+}

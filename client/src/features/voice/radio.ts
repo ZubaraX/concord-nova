@@ -9,6 +9,7 @@ import { diag } from "../../lib/diag";
 import { errorText, t } from "../../lib/i18n";
 import { data } from "../../store/data";
 import { goneIds, isNewer, titleOf } from "./radioSync";
+import { parsePlaylist } from "./musicLinks";
 
 interface RadioStore {
   states: Record<string, RadioStateDTO>;
@@ -67,8 +68,29 @@ function probe(src: string): Promise<number | null> {
 }
 
 
+const PLAYLIST = /\.(m3u8?|pls)$/i;
+const AUDIO_EXT = /\.(mp3|m4a|aac|ogg|oga|opus|flac|wav|weba|webm)$/i;
+const isAudio = (f: File) => f.type.startsWith("audio/") || AUDIO_EXT.test(f.name);
+
+/** A whole folder: its audio files, in name order (a folder of music is a playlist too). */
+export function addFolder(channelId: string, files: File[]) {
+  const audio = files.filter(isAudio).sort((a, b) => (a.webkitRelativePath || a.name).localeCompare(b.webkitRelativePath || b.name, undefined, { numeric: true }));
+  return addFiles(channelId, audio);
+}
+
+/** A playlist file (.m3u, .pls): the web addresses it lists join the queue. Entries on someone's computer can't be reached. */
+async function addPlaylistFile(channelId: string, file: File) {
+  const { urls, local } = parsePlaylist(await file.text());
+  if (local) toast(t("radio.playlistLocal", { n: local }));
+  for (const u of urls) await addLink(channelId, u.url, u.title ?? undefined);
+}
+
 export async function addFiles(channelId: string, files: File[]) {
   for (const file of files) {
+    if (PLAYLIST.test(file.name)) {
+      await addPlaylistFile(channelId, file);
+      continue;
+    }
     if (file.size > RADIO_MAX_FILE_BYTES) {
       toast(t("radio.tooBig", { name: file.name }), "error");
       continue;
@@ -95,7 +117,7 @@ export async function addFiles(channelId: string, files: File[]) {
   }
 }
 
-export async function addLink(channelId: string, raw: string) {
+export async function addLink(channelId: string, raw: string, title?: string) {
   const url = raw.trim();
   if (!/^https?:\/\//i.test(url)) return toast(t("radio.badLink"), "error");
   try {
@@ -107,7 +129,7 @@ export async function addLink(channelId: string, raw: string) {
     if (!duration) return toast(t("radio.linkNotAudio"), "error");
     if (duration > RADIO_MAX_SECONDS) return toast(t("radio.tooLong", { name: url }), "error");
     const name = new URL(url).pathname.split("/").filter(Boolean).pop() ?? url;
-    await api(`/api/channels/${channelId}/radio/items`, { method: "POST", body: { kind: "link", url, title: titleOf(name, true), duration: Math.ceil(duration) } });
+    await api(`/api/channels/${channelId}/radio/items`, { method: "POST", body: { kind: "link", url, title: title?.trim().slice(0, 200) || titleOf(name, true), duration: Math.ceil(duration) } });
   } catch (e) {
     toast(errorText(e), "error");
   }
