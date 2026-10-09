@@ -25,6 +25,24 @@ export function yandexEmbed(link: string): { src: string; height: number } | nul
   return null;
 }
 
+export type LinkKind = "track" | "album" | "playlist" | "artist" | "other";
+
+/** What a Yandex Music / VK link points at, for its tile. */
+export function linkKind(link: string): LinkKind {
+  let p: string;
+  try {
+    const u = new URL(link);
+    p = u.pathname + u.search;
+  } catch {
+    return "other";
+  }
+  if (/playlist/i.test(p)) return "playlist";
+  if (/\/track\/|[?&]z=audio-?\d/i.test(p)) return "track";
+  if (/\/album\//i.test(p)) return "album";
+  if (/\/artist\//i.test(p)) return "artist";
+  return "other";
+}
+
 /**
  * The web addresses a playlist file lists (.m3u/.m3u8 with #EXTINF titles, or
  * .pls), and how many entries point at files on someone's computer instead —

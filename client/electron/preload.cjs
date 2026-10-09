@@ -35,7 +35,6 @@ contextBridge.exposeInMainWorld("nova", {
   setOverlay: (state) => ipcRenderer.send("overlay:state", state),
   onOverlayData: (cb) => on("overlay:data", cb),
   openExternal: (url) => ipcRenderer.send("open-external", url),
-  openMusic: (url) => ipcRenderer.send("music:open", url),
   setAutoLaunch: (flag) => ipcRenderer.send("autolaunch", flag),
   setCloseToTray: (flag) => ipcRenderer.send("close-to-tray", flag),
 });

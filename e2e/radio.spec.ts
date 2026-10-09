@@ -83,8 +83,8 @@ test("radio: a file plays for everyone in step, each at their own volume; a late
   await expect(panel.locator("[data-radio-item]")).toHaveCount(2);
   await panel.getByPlaceholder(/Ссылка на mp3/).fill("https://music.yandex.ru/album/1/track/2");
   await panel.getByRole("button", { name: "Добавить", exact: true }).click();
-  // A Yandex link isn't a track of the queue: it shows Yandex's own player.
-  await expect(panel.locator('[data-radio-link] iframe[src="https://music.yandex.ru/iframe/album/1/track/2"]')).toBeAttached();
+  // A Yandex link isn't a track of the queue: it is a tile of its own.
+  await expect(panel.locator("[data-radio-link][data-service=yandex]")).toBeVisible();
   await expect(panel.locator("[data-radio-item]")).toHaveCount(2);
   await panel.getByRole("button", { name: "Следующий" }).click();
   await expect(panel.locator("[data-radio-item][data-current]")).toContainText("song");
@@ -136,27 +136,20 @@ test("FM: a station from the catalog plays for everyone in the call, each at the
   const { guild, voice } = await guildWith(request, alice, [bob]);
   const a = await openAs(browser, alice, `/#/channels/${guild.id}/${voice.id}`);
   const b = await openAs(browser, bob, `/#/channels/${guild.id}/${voice.id}`);
-  // The catalog (Radio Browser) and the station's stream, played by the test.
-  const stations = [
-    { stationuuid: "u-1", name: "Тестовое FM", url_resolved: "https://fm.test/live.mp3", favicon: "", codec: "MP3", bitrate: 128, countrycode: "RU", tags: "pop", hls: 0, lastcheckok: 1 },
-    { stationuuid: "u-2", name: "Другое радио", url_resolved: "https://fm.test/other.mp3", favicon: "", codec: "MP3", bitrate: 128, countrycode: "RU", tags: "", hls: 0, lastcheckok: 1 },
-  ];
-  for (const p of [a.page, b.page]) {
-    await p.route(/radio-browser\.info\/json\/stations\//, (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(stations), headers: { "access-control-allow-origin": "*" } }));
-    await p.route(/radio-browser\.info\/json\/url\//, (route) => route.fulfill({ status: 200, contentType: "application/json", body: "{}", headers: { "access-control-allow-origin": "*" } }));
-    await p.route("https://fm.test/**", (route) => route.fulfill({ status: 200, contentType: "audio/wav", body: wav(120, 520) }));
-  }
+  // The stations come from this server (its built-in catalogue — no Radio Browser, no VPN);
+  // the stream of Anon.FM (an https station of it) is played by the test.
+  for (const p of [a.page, b.page]) await p.route("https://icecast.anon.fm/**", (route) => route.fulfill({ status: 200, contentType: "audio/wav", body: wav(120, 520) }));
   await a.page.getByRole("button", { name: "Зайти в канал" }).click();
   await b.page.getByRole("button", { name: "Зайти в канал" }).click();
   await expect(b.page.locator(`[data-user="${alice.id}"]`).first()).toBeVisible();
 
   await a.page.getByRole("button", { name: "FM-радио" }).last().click();
   const fm = a.page.locator("[data-fm]");
-  await fm.getByRole("button", { name: /Тестовое FM/ }).click();
-  await expect(fm.locator("[data-fm-now]")).toContainText("Тестовое FM");
+  await fm.getByRole("button", { name: /Anon.FM/ }).click();
+  await expect(fm.locator("[data-fm-now]")).toContainText("Anon.FM");
   await expect.poll(async () => (await player(b.page)).paused, { timeout: 20_000 }).toBe(false);
   expect((await player(b.page)).itemId).toBe("station");
-  await expect(b.page.locator("[data-radio-now]")).toContainText("📻 Тестовое FM");
+  await expect(b.page.locator("[data-radio-now]")).toContainText("📻 Anon.FM");
 
   // Bob's FM volume is his own.
   await b.page.getByRole("button", { name: "FM-радио" }).last().click();
@@ -165,14 +158,14 @@ test("FM: a station from the catalog plays for everyone in the call, each at the
   expect((await player(a.page)).volume).toBeCloseTo(0.6, 2);
 
   // Search finds a station by name; off stops it for everyone.
-  await fm.getByPlaceholder(/Найти станцию/).fill("Другое");
-  await expect(fm.getByRole("button", { name: /Другое радио/ })).toBeVisible();
+  await fm.getByPlaceholder(/Найти станцию/).fill("европа");
+  await expect(fm.getByRole("button", { name: /Europa Plus/ })).toBeVisible();
   await fm.getByRole("button", { name: "Выключить" }).click();
   await expect.poll(async () => (await player(b.page)).itemId).toBeNull();
   noErrors(a, b);
 });
 
-test("radio: Yandex Music plays in Yandex's own player, VK opens the music window; playlists and folders fill the queue", async ({ browser, request }) => {
+test("radio: shared links are tiles (Yandex opens its own player, VK opens VK); playlists and folders fill the queue", async ({ browser, request }) => {
   const { mkdtempSync, writeFileSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
@@ -186,16 +179,20 @@ test("radio: Yandex Music plays in Yandex's own player, VK opens the music windo
   const panel = a.page.locator("[data-radio]");
   const link = panel.getByPlaceholder(/Ссылка на mp3/);
 
-  // Yandex: its own player, right in the panel.
+  // Yandex: a tile; clicking it opens Yandex's own player in the panel (with a word on its volume).
   await link.fill("https://music.yandex.ru/album/41735634/track/150614117?utm_source=desktop");
   await panel.getByRole("button", { name: "Добавить", exact: true }).click();
+  const ya = panel.locator("[data-radio-link][data-service=yandex]");
+  await expect(ya).toBeVisible();
+  await ya.click();
   await expect(panel.locator('iframe[src="https://music.yandex.ru/iframe/album/41735634/track/150614117"]')).toBeVisible();
+  await expect(panel.getByText(/Ползунок радио не меняет громкость/)).toBeVisible();
 
-  // VK: the music window of the desktop app.
+  // VK: a tile too — VK can't be embedded, so it opens VK.
   await link.fill("https://vk.com/audio_playlist-147845620_2949");
   await panel.getByRole("button", { name: "Добавить", exact: true }).click();
-  await panel.getByRole("button", { name: /Слушать в мини-окне/ }).click();
-  await expect.poll(() => a.page.evaluate(() => (window as unknown as { __music?: string[] }).__music ?? [])).toEqual(["https://vk.com/audio_playlist-147845620_2949"]);
+  await panel.locator("[data-radio-link][data-service=vk]").click();
+  await expect.poll(() => a.page.evaluate(() => (window as unknown as { __external?: string[] }).__external ?? [])).toEqual(["https://vk.com/audio_playlist-147845620_2949"]);
 
   // A playlist file: its web addresses join the queue (with their titles); one on a computer is left out.
   const m3u = "#EXTM3U\n#EXTINF:15,Первая\nhttps://songs.test/1.wav\n#EXTINF:15,Вторая\nhttps://songs.test/2.wav\nC:\\Music\\track.mp3\n";

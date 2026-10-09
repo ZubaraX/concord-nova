@@ -190,6 +190,13 @@ async function buildEmbed(url: string): Promise<EmbedDTO | null> {
   };
 }
 
+/** A page's title and picture (through the image proxy) — the radio's shared-link tiles. */
+export async function pageInfo(url: string): Promise<{ title: string | null; image: string | null } | null> {
+  const e = await embedFor(url);
+  if (!e) return null;
+  return { title: e.title ?? null, image: e.image?.url ?? e.thumbnail?.url ?? null };
+}
+
 async function embedFor(url: string): Promise<EmbedDTO | null> {
   const hit = lru.get(url);
   if (hit && Date.now() - hit.at < CACHE_TTL) return hit.embed;

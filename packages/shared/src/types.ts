@@ -527,6 +527,8 @@ export interface RadioLinkDTO {
   service: "yandex" | "vk";
   url: string;
   title: string | null;
+  /** The page's cover picture (through the image proxy), once read. */
+  image: string | null;
   addedBy: string;
   at: number;
 }

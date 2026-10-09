@@ -7,13 +7,25 @@ import { authenticate } from "../lib/auth";
 import { ApiError, badRequest, forbidden, parse } from "../lib/errors";
 import { stationPlayUrl, verifyRelay } from "../lib/radioRelay";
 import { openStream } from "../lib/ssrf";
-import { proxied } from "../services/embeds";
+import { pageInfo, proxied } from "../services/embeds";
+import { findStations } from "../services/stations";
 import { cache } from "../state/cache";
 import { radio } from "../state/radio";
 import { voice } from "../state/voice";
 
 const params = z.object({ id: zId });
 const itemParams = z.object({ id: zId, itemId: zId });
+
+/** A music page's title without the site's own tail ("… слушать онлайн", "— Яндекс Музыка"). */
+export function tileTitle(title: string | null): string | null {
+  if (!title) return null;
+  const t = title
+    // (\b knows no Cyrillic: a space or the end marks the word's end instead.)
+    .replace(/\s*[.:|—-]?\s*(слушать|listen)(\s.*)?$/i, "")
+    .replace(/\s*[|—-]\s*(Яндекс\s*Музыка|Yandex\s*Music|ВКонтакте|VK)\s*$/i, "")
+    .trim();
+  return t.slice(0, 200) || null;
+}
 
 function inCall(userId: string, channelId: string) {
   if (voice.get(userId)?.channelId !== channelId) throw forbidden("not_in_call");
@@ -46,7 +58,12 @@ export async function radioRoutes(app: FastifyInstance) {
     const input = parse(radioLinkCreateSchema, req.body);
     const service = isMusicServiceLink(input.url);
     if (!service) throw badRequest("not_a_music_service_link");
-    return radio.addLink(id, req.auth.userId, input, service);
+    const link = radio.addLink(id, req.auth.userId, input, service);
+    // The tile's title and cover, from the page, a moment later.
+    void pageInfo(input.url)
+      .then((info) => info && radio.updateLink(id, link.id, { title: tileTitle(info.title), image: info.image }))
+      .catch(() => {});
+    return link;
   });
   app.delete("/api/channels/:id/radio/items/:itemId", async (req) => {
     const { id, itemId } = parse(itemParams, req.params);
@@ -61,6 +78,12 @@ export async function radioRoutes(app: FastifyInstance) {
     radio.skip(id, parse(radioSkipSchema, req.body).itemId);
     return radio.state(id);
   });
+  // FM: the stations to choose from — served from here, not the (blocked in Russia) catalogue site.
+  app.get("/api/radio/stations", async (req) => {
+    const { q } = parse(z.object({ q: z.string().max(100).optional() }), req.query);
+    return { stations: await findStations(q ?? "") };
+  });
+
   // FM: a station on (another replaces it), or off.
   app.post("/api/channels/:id/radio/station", async (req) => {
     const { id } = parse(params, req.params);

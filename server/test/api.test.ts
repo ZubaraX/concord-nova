@@ -909,6 +909,15 @@ describe("radio", () => {
     await voice.onLeave(host.id, ch);
   });
 
+  it("FM stations come from this server: popular ones, and a search (no VPN needed)", async () => {
+    const top = await api<{ stations: { name: string; url: string }[] }>("GET", "/api/radio/stations", alice.token);
+    expect(top.status).toBe(200);
+    expect(top.body.stations.length).toBeGreaterThan(20);
+    const found = await api<{ stations: { name: string }[] }>("GET", `/api/radio/stations?q=${encodeURIComponent("европа")}`, alice.token);
+    expect(found.body.stations.map((s) => s.name)).toContain("Europa Plus");
+    expect((await api("GET", "/api/radio/stations")).status).toBe(401);
+  });
+
   it("a server mute covers the radio: no adding, skipping or pausing", async () => {
     const mod = await register("radiomod");
     const loud = await register("radioloud");

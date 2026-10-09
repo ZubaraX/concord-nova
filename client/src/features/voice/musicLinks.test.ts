@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parsePlaylist, yandexEmbed } from "./musicLinks";
+import { linkKind, parsePlaylist, yandexEmbed } from "./musicLinks";
 
 describe("Yandex Music links → the official player", () => {
   it("a track, an album and a playlist each get the widget Yandex itself offers", () => {
@@ -28,5 +28,18 @@ describe("playlist files", () => {
   it("a .pls too", () => {
     const pls = "[playlist]\nFile1=https://cdn.example/a.mp3\nTitle1=A\nFile2=/home/me/b.mp3\nNumberOfEntries=2\n";
     expect(parsePlaylist(pls)).toEqual({ urls: [{ url: "https://cdn.example/a.mp3", title: "A" }], local: 1 });
+  });
+});
+
+describe("what a shared link is, for its tile", () => {
+  it("tracks, albums, playlists and artists of Yandex and VK", () => {
+    expect(linkKind("https://music.yandex.ru/album/41735634/track/150614117")).toBe("track");
+    expect(linkKind("https://music.yandex.ru/album/41735634")).toBe("album");
+    expect(linkKind("https://music.yandex.ru/users/someone/playlists/1003")).toBe("playlist");
+    expect(linkKind("https://music.yandex.ru/artist/24921667")).toBe("artist");
+    expect(linkKind("https://vk.com/audio_playlist-147845620_2949")).toBe("playlist");
+    expect(linkKind("https://vk.com/music/playlist/-147845620_2949")).toBe("playlist");
+    expect(linkKind("https://vk.com/audio?z=audio-2001_123")).toBe("track");
+    expect(linkKind("https://vk.com/audios123")).toBe("other");
   });
 });

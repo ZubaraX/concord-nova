@@ -12,6 +12,8 @@ coverage/
 
 # Runtime data: SQLite database (+ WAL/SHM sidecars), uploads, media cache
 data/
+# …but not the data the server ships with (the FM station catalogue).
+!server/src/data/
 server/prisma/*.db
 server/prisma/*.db-journal
 server/prisma/*.db-shm

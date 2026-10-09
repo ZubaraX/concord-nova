@@ -72,10 +72,19 @@ export class RadioManager {
 
   addLink(channelId: string, userId: string, input: { url: string; title?: string }, service: "yandex" | "vk"): RadioLinkDTO {
     const s = this.station(channelId);
-    const link: RadioLinkDTO = { id: this.deps.newId(), service, url: input.url, title: input.title ?? null, addedBy: userId, at: this.deps.now() };
+    const link: RadioLinkDTO = { id: this.deps.newId(), service, url: input.url, title: input.title ?? null, image: null, addedBy: userId, at: this.deps.now() };
     s.links = [...s.links, link].slice(-RADIO_MAX_LINKS);
     this.send(channelId);
     return link;
+  }
+
+  /** A shared link's title and cover, read from its page after it was added. */
+  updateLink(channelId: string, linkId: string, info: { title: string | null; image: string | null }) {
+    const link = this.stations.get(channelId)?.links.find((l) => l.id === linkId);
+    if (!link) return;
+    link.title = info.title ?? link.title;
+    link.image = info.image;
+    this.send(channelId);
   }
 
   remove(channelId: string, userId: string, itemId: string, moderator: boolean) {

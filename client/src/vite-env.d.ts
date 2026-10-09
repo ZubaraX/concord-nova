@@ -41,8 +41,6 @@ interface NovaDesktop {
   setOverlay(state: unknown): void;
   onOverlayData(cb: (state: unknown) => void): () => void;
   openExternal(url: string): void;
-  /** The music window (VK / Yandex Music sites, its own signed-in session). */
-  openMusic?(url: string): void;
   setAutoLaunch?(on: boolean): void;
 }
 

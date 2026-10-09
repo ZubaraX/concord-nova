@@ -157,9 +157,8 @@ function stubDesktopBridge() {
     onGlobalShortcut: off,
     setOverlay: noop,
     onOverlayData: off,
-    openExternal: noop,
-    // The music window: tests read what it was asked to open from window.__music.
-    openMusic: (url: string) => ((window as unknown as { __music: string[] }).__music ??= []).push(url),
+    // Links opened in the system browser: tests read them from window.__external.
+    openExternal: (url: string) => ((window as unknown as { __external: string[] }).__external ??= []).push(url),
     setAutoLaunch: noop,
     // Screen-share audio from the Windows helper: tests drive it through window.__appAudio.
     onAppAudio: (cb: unknown) => {

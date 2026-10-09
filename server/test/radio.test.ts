@@ -160,3 +160,18 @@ describe("RadioManager — FM station", () => {
     expect(m.state("c").station).toBeNull();
   });
 });
+
+describe("RadioManager — shared links as tiles", () => {
+  it("a link gets its title and cover once the page has been read, and everyone is told", () => {
+    const { m, sent } = make();
+    const link = m.addLink("c", "a", { url: "https://music.yandex.ru/album/1/track/2" }, "yandex");
+    expect(link.image).toBeNull();
+    m.updateLink("c", link.id, { title: "Сыграю на гитаре — Zavodit", image: "/media-proxy?u=x&s=y" });
+    expect(m.state("c").links[0]).toMatchObject({ title: "Сыграю на гитаре — Zavodit", image: "/media-proxy?u=x&s=y" });
+    expect(sent.at(-1)?.links[0].title).toBe("Сыграю на гитаре — Zavodit");
+  });
+  it("a link that's gone meanwhile is left alone", () => {
+    const { m } = make();
+    expect(() => m.updateLink("c", "nope", { title: "x", image: null })).not.toThrow();
+  });
+});
