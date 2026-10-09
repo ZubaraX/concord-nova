@@ -824,3 +824,42 @@ describe("ssrf guard", () => {
     await expect(safeFetch("http://localhost:1/")).rejects.toThrow();
   });
 });
+
+describe("radio", () => {
+  it("people in the call share a queue; others can't touch it; leaving cleans up", async () => {
+    const dj = await register("dj");
+    const fan = await register("fan");
+    const g = await api<GuildCreatePayload>("POST", "/api/guilds", dj.token, { name: "Радио", template: "default", locale: "ru" });
+    const inv = await api<{ code: string }>("POST", `/api/guilds/${g.body.id}/invites`, dj.token, { maxAge: 0, maxUses: 0 });
+    await api("POST", `/api/invites/${inv.body.code}`, fan.token);
+    const ch = g.body.channels.find((c) => c.type === "voice")!.id;
+    const { voice } = await import("../src/state/voice");
+
+    // Not in the call: refused.
+    expect((await api("POST", `/api/channels/${ch}/radio/items`, dj.token, { kind: "file", title: "Песня", duration: 120 })).status).toBe(403);
+
+    await voice.onJoin(dj.id, ch, "sid-dj");
+    await voice.onJoin(fan.id, ch, "sid-fan");
+    const fanLive = await live(fan);
+    const added = await api<{ id: string }>("POST", `/api/channels/${ch}/radio/items`, dj.token, { kind: "file", title: "Песня", duration: 120 });
+    expect(added.status).toBe(200);
+    const st = await fanLive.waitFor("RADIO_STATE", (s) => s.channelId === ch && s.items.length === 1);
+    expect(st.current?.itemId).toBe(added.body.id);
+
+    // A Yandex link is a card, not a track; a page link with kind "link" must be http(s).
+    expect((await api("POST", `/api/channels/${ch}/radio/links`, fan.token, { url: "https://music.yandex.ru/album/1/track/2" })).status).toBe(200);
+    expect((await api("POST", `/api/channels/${ch}/radio/links`, fan.token, { url: "https://example.com/a.mp3" })).status).toBe(400);
+    expect((await api("POST", `/api/channels/${ch}/radio/items`, fan.token, { kind: "link", title: "x", duration: 10, url: "ftp://x/y.mp3" })).status).toBe(400);
+
+    // The fan can't remove the DJ's track; the DJ can.
+    const second = await api<{ id: string }>("POST", `/api/channels/${ch}/radio/items`, dj.token, { kind: "file", title: "Вторая", duration: 60 });
+    expect((await api("DELETE", `/api/channels/${ch}/radio/items/${second.body.id}`, fan.token)).status).toBe(403);
+
+    // The DJ leaves: their second track goes, the current one stays.
+    await voice.onLeave(dj.id, ch);
+    const after = await api<{ items: { id: string }[] }>("GET", `/api/channels/${ch}/radio`, fan.token);
+    expect(after.body.items.map((i) => i.id)).toEqual([added.body.id]);
+    await voice.onLeave(fan.id, ch);
+    expect((await api<{ items: unknown[] }>("GET", `/api/channels/${ch}/radio`, dj.token)).body.items).toEqual([]);
+  });
+});

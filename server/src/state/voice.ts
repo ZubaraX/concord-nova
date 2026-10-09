@@ -8,6 +8,7 @@ import { cache } from "./cache";
 import { toChannel, toUser, toUsers } from "../gateway/io";
 import * as lk from "../voice/livekit";
 import { pushForVoiceStart, pushToUser } from "../services/push";
+import { radio } from "./radio";
 import { createMessage } from "../services/messages";
 import { loadMessage } from "../services/serialize";
 
@@ -145,6 +146,7 @@ class VoiceManager {
     if (sid && s.sid !== sid) return; // an older duplicate session left — the user is still here
     this.states.delete(userId);
     this.emit({ ...this.dto(s), channelId: null, selfVideo: false, selfStream: false }, channelId);
+    radio.onLeave(channelId, userId, this.countInChannel(channelId));
     if (!s.guildId && this.countInChannel(channelId) === 0) await this.endCall(channelId);
   }
 
