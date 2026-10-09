@@ -15,6 +15,7 @@ import type {
   NotificationSettingDTO,
   PollDTO,
   PresenceDTO,
+  RadioStateDTO,
   ReadyPayload,
   RelationshipDTO,
   RoleDTO,
@@ -87,6 +88,8 @@ export interface DispatchMap {
   CALL_CREATE: CallDTO;
   CALL_UPDATE: CallDTO;
   CALL_DELETE: { channelId: string };
+  /** A voice channel's radio changed (queue, what plays since when, shared links). */
+  RADIO_STATE: RadioStateDTO;
 
   /** The session was revoked (sign-out elsewhere, password change). */
   SESSION_INVALIDATE: { reason: string };

@@ -319,3 +319,31 @@ export function issuesToFields(issues: readonly { path: readonly PropertyKey[]; 
   }
   return out;
 }
+
+export const RADIO_MAX_ITEMS = 50;
+export const RADIO_MAX_SECONDS = 20 * 60;
+export const RADIO_MAX_FILE_BYTES = 50 * 1024 * 1024;
+export const RADIO_MAX_LINKS = 20;
+const zHttpUrl = z.string().trim().max(2000).regex(/^https?:\/\/\S+$/i, "invalid_url");
+export const radioItemCreateSchema = z
+  .object({
+    kind: z.enum(["file", "link"]),
+    title: z.string().trim().min(1).max(200),
+    duration: z.number().min(1).max(RADIO_MAX_SECONDS),
+    url: zHttpUrl.optional(),
+  })
+  .refine((v) => (v.kind === "link") === !!v.url, { message: "url_required_for_links", path: ["url"] });
+export const radioLinkCreateSchema = z.object({ url: zHttpUrl, title: z.string().trim().max(200).optional() });
+export const radioSkipSchema = z.object({ itemId: zId });
+
+/** Yandex Music or VK links: shared as cards (no third-party playback exists). */
+export function isMusicServiceLink(url: string): "yandex" | "vk" | null {
+  try {
+    const h = new URL(url).hostname.toLowerCase().replace(/^www\.|^m\./, "");
+    if (/^music\.yandex\.(ru|com|by|kz|uz)$/.test(h)) return "yandex";
+    if (/^(vk\.com|vk\.ru|vkvideo\.ru|vk\.cc)$/.test(h)) return "vk";
+  } catch {
+    /* not a URL */
+  }
+  return null;
+}

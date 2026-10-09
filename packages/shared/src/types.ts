@@ -508,3 +508,40 @@ export interface GifConfigDTO {
 export interface ApiErrorBody {
   error: { code: string; message: string; fields?: Record<string, string> };
 }
+
+// ── radio ────────────────────────────────────────────────────────────────────
+/** A queued track: a file relayed by the adder's app, or a direct audio link. items[0] is the current one while `current` is set. */
+export interface RadioItemDTO {
+  id: string;
+  kind: "file" | "link";
+  title: string;
+  /** Seconds. */
+  duration: number;
+  addedBy: string;
+  /** The link, for kind "link". */
+  url: string | null;
+}
+/** A Yandex Music / VK link someone shared: a card, not played. */
+export interface RadioLinkDTO {
+  id: string;
+  service: "yandex" | "vk";
+  url: string;
+  title: string | null;
+  addedBy: string;
+  at: number;
+}
+export interface RadioCurrentDTO {
+  itemId: string;
+  /** Server ms when the track's 0:00 was (moved by pauses). */
+  startedAt: number;
+  /** Position in ms while paused, else null. */
+  pausedAt: number | null;
+}
+export interface RadioStateDTO {
+  channelId: string;
+  items: RadioItemDTO[];
+  current: RadioCurrentDTO | null;
+  links: RadioLinkDTO[];
+  /** Server clock at sending, for the listeners' offset. */
+  serverNow: number;
+}
