@@ -71,6 +71,8 @@ export interface LocalSettings {
   screenCustom: ScreenCustom;
   /** Resolution, frame rate, bitrate and codec shown on streams. */
   streamInfo: boolean;
+  /** How loud the call's radio plays for you, 0–100. */
+  radioVolume: number;
   joinMuted: boolean;
   userVolumes: Record<string, number>;
   streamVolumes: Record<string, number>;
@@ -159,6 +161,7 @@ const LOCAL_DEFAULTS: LocalSettings = {
   screenCodec: "auto",
   screenCustom: { height: 1080, fps: 60, bitrateKbps: 12_000, codec: "h264", mode: "balanced" },
   streamInfo: false,
+  radioVolume: 60,
   joinMuted: false,
   userVolumes: {},
   streamVolumes: {},
