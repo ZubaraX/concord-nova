@@ -13,6 +13,7 @@ import type { ByteStreamReader } from "livekit-client";
 import { diag, diagError } from "../../lib/diag";
 import { getRoom, useVoice } from "./voice";
 import { myFile, useRadio } from "./radio";
+import { acceptRadioFile, audioType } from "./radioSync";
 
 export const RADIO_TOPIC = "nova-radio";
 const CHUNK = 64 * 1024;
@@ -39,13 +40,23 @@ function upcoming() {
   return st?.items.slice(0, 2) ?? [];
 }
 
-export async function onRadioStream(reader: ByteStreamReader) {
+/**
+ * A file from the call. Taken only if it belongs to the current or next track and
+ * comes from whoever added that track; anything else (another member's file under
+ * someone's track id, or one sent before this app had the queue) is dropped — the
+ * real one is asked for again (askForMissing).
+ */
+export async function onRadioStream(reader: ByteStreamReader, from: string) {
   const itemId = reader.info.attributes?.itemId;
   if (!itemId || received.has(itemId) || receiving.has(itemId)) return;
+  if (!acceptRadioFile(upcoming(), itemId, from, reader.info.size)) {
+    diag("radio", "file refused", { item: itemId, from, size: reader.info.size });
+    return;
+  }
   receiving.add(itemId);
   try {
     const chunks = await reader.readAll();
-    received.set(itemId, URL.createObjectURL(new Blob(chunks as BlobPart[], { type: reader.info.mimeType || "audio/mpeg" })));
+    received.set(itemId, URL.createObjectURL(new Blob(chunks as BlobPart[], { type: audioType(reader.info.mimeType) })));
     useRadioFiles.setState((s) => ({ ready: { ...s.ready, [itemId]: true } }));
     diag("radio", "file received", { item: itemId, size: reader.info.size });
   } catch (e) {

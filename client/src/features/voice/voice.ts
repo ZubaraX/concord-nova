@@ -380,7 +380,7 @@ export function stayInCall() {
 // ── connect / disconnect ─────────────────────────────────────────────────────
 function wire(r: Room) {
   // Radio files from the people who added them (./radioFiles).
-  r.registerByteStreamHandler(RADIO_TOPIC, (reader) => void onRadioStream(reader));
+  r.registerByteStreamHandler(RADIO_TOPIC, (reader, { identity }) => void onRadioStream(reader, identity));
   r.on(RoomEvent.ParticipantConnected, (p) => {
     diag("voice", "someone joined", { who: p.identity });
     playSound("join");

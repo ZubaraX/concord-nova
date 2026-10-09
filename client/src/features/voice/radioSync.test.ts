@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { goneIds, isNewer, shouldPlay, shouldSeek, sourceStep, titleOf } from "./radioSync";
+import { acceptRadioFile, audioType, goneIds, isNewer, shouldPlay, shouldSeek, sourceStep, titleOf } from "./radioSync";
 
 describe("radio titles", () => {
   it("a file name with % becomes a title instead of an error", () => {
@@ -44,5 +44,26 @@ describe("radio bookkeeping", () => {
     expect(isNewer(undefined, { serverNow: 5 })).toBe(true);
     expect(isNewer({ serverNow: 10 }, { serverNow: 5 })).toBe(false);
     expect(isNewer({ serverNow: 10 }, { serverNow: 10 })).toBe(true);
+  });
+});
+
+describe("radio files from the call", () => {
+  const upcoming = [
+    { id: "a", kind: "file" as const, addedBy: "alice" },
+    { id: "l", kind: "link" as const, addedBy: "bob" },
+  ];
+  it("only the one who added a track may deliver its file — not someone else (a muted member) under its id", () => {
+    expect(acceptRadioFile(upcoming, "a", "alice", 1000)).toBe(true);
+    expect(acceptRadioFile(upcoming, "a", "mallory", 1000)).toBe(false);
+    expect(acceptRadioFile(upcoming, "l", "bob", 1000)).toBe(false);
+    expect(acceptRadioFile(upcoming, "zzz", "alice", 1000)).toBe(false);
+  });
+  it("nothing over the size limit", () => {
+    expect(acceptRadioFile(upcoming, "a", "alice", 51 * 1024 * 1024)).toBe(false);
+  });
+  it("whatever type the sender claims, it plays as audio", () => {
+    expect(audioType("audio/ogg")).toBe("audio/ogg");
+    expect(audioType("text/html")).toBe("audio/mpeg");
+    expect(audioType("")).toBe("audio/mpeg");
   });
 });

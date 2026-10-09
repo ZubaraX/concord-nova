@@ -54,3 +54,20 @@ export function goneIds(tracked: Iterable<string>, seen: Set<string>, live: Set<
 export function isNewer(held: { serverNow: number } | undefined, next: { serverNow: number }): boolean {
   return !held || next.serverNow >= held.serverNow;
 }
+
+/** The size limit of a radio file (RADIO_MAX_FILE_BYTES in @nova/shared). */
+const MAX_FILE_BYTES = 50 * 1024 * 1024;
+
+/**
+ * Whether a file that came through the call may stand in for a track: only one of
+ * the current/next file tracks, only from the person who added it (anyone else —
+ * a muted member included — could otherwise replace what everyone hears), and
+ * within the size limit.
+ */
+export function acceptRadioFile(upcoming: { id: string; kind: "file" | "link"; addedBy: string }[], itemId: string, from: string, size: number | undefined): boolean {
+  const item = upcoming.find((i) => i.id === itemId);
+  return !!item && item.kind === "file" && item.addedBy === from && (size ?? 0) <= MAX_FILE_BYTES;
+}
+
+/** Played as audio whatever type the sender put on it. */
+export const audioType = (mime: string | undefined) => (mime && /^audio\/[\w.+-]+$/i.test(mime) ? mime : "audio/mpeg");
