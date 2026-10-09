@@ -38,6 +38,8 @@ import { MicProcessor } from "./processor";
 import { appAudioTrack, stopAppAudio } from "./appAudio";
 import { useExpressions } from "./expressions";
 import { captureSize, resolveScreenPreset, type ScreenCodec, type ScreenPreset } from "./screenQuality";
+import { clearRadioFiles, onRadioStream, RADIO_TOPIC, sendRadioFiles } from "./radioFiles";
+import { loadRadio } from "./radio";
 
 export type Quality = "excellent" | "good" | "poor" | "lost" | "unknown";
 
@@ -377,8 +379,11 @@ export function stayInCall() {
 
 // ── connect / disconnect ─────────────────────────────────────────────────────
 function wire(r: Room) {
+  // Radio files from the people who added them (./radioFiles).
+  r.registerByteStreamHandler(RADIO_TOPIC, (reader) => void onRadioStream(reader));
   r.on(RoomEvent.ParticipantConnected, (p) => {
     diag("voice", "someone joined", { who: p.identity });
+    void sendRadioFiles(p.identity);
     playSound("join");
     bump();
     watchAlone();
@@ -515,6 +520,7 @@ async function onDisconnected(reason?: DisconnectReason) {
 function cleanup() {
   stopAloneWatch();
   stopRemoteClips();
+  clearRadioFiles();
   for (const el of audioEls.values()) el.remove();
   audioEls.clear();
   void mic?.destroy().catch(() => {});
@@ -591,6 +597,7 @@ export async function joinVoice(channelId: string, isRejoin = false) {
   reportSelf();
   bump();
   watchAlone();
+  void loadRadio(channelId);
   // The soundboard's files, once the call has settled (decoding them while joining would crackle).
   const guildId = data().channels[channelId]?.guildId ?? null;
   setTimeout(() => void clips().then((m) => m.prefetchSounds(guildId)), 5000);
