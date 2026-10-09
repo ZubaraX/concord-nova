@@ -175,3 +175,116 @@ describe("RadioManager — shared links as tiles", () => {
     expect(() => m.updateLink("c", "nope", { title: "x", image: null })).not.toThrow();
   });
 });
+
+describe("RadioManager — switching tracks", () => {
+  const titles = (m: RadioManager) => m.state("c").items.map((i) => i.title);
+  const played = (m: RadioManager) => m.state("c").history.map((i) => i.title);
+
+  it("a track that ends is followed within a second (a short grace, not a pause)", () => {
+    const { m, advance } = make();
+    m.add("c", "a", song("A", 100.4));
+    m.add("c", "a", song("B"));
+    advance(100_400 + 700);
+    expect(m.state("c").current?.itemId).toBe("id1");
+    advance(200);
+    expect(m.state("c").current?.itemId).toBe("id2");
+  });
+
+  it("played tracks are kept to go back to (skipped ones too; one taken out isn't)", () => {
+    const { m } = make();
+    for (const t of ["A", "B", "C", "D"]) m.add("c", "a", song(t));
+    m.skip("c", "id1");
+    m.remove("c", "a", "id2", false);
+    expect(titles(m)).toEqual(["C", "D"]);
+    expect(played(m)).toEqual(["A"]);
+  });
+
+  it("previous near a track's start brings the one before back, this one after it", () => {
+    const { m, advance, now } = make();
+    for (const t of ["A", "B", "C"]) m.add("c", "a", song(t));
+    m.skip("c", "id1");
+    advance(3000);
+    m.previous("c", "id2");
+    expect(titles(m)).toEqual(["A", "B", "C"]);
+    expect(m.state("c").current).toEqual({ itemId: "id1", startedAt: now(), pausedAt: null });
+    expect(played(m)).toEqual([]);
+    // And forward again.
+    m.skip("c", "id1");
+    expect(titles(m)).toEqual(["B", "C"]);
+  });
+
+  it("previous far into a track starts it over; with nothing before, too", () => {
+    const { m, advance, now } = make();
+    m.add("c", "a", song("A"));
+    m.add("c", "a", song("B"));
+    m.skip("c", "id1");
+    advance(20_000);
+    m.previous("c", "id2");
+    expect(titles(m)).toEqual(["B"]);
+    expect(m.state("c").current).toEqual({ itemId: "id2", startedAt: now(), pausedAt: null });
+    const fresh = make();
+    fresh.m.add("c", "a", song("X"));
+    fresh.advance(1000);
+    fresh.m.previous("c", "id1");
+    expect(fresh.m.state("c").current).toEqual({ itemId: "id1", startedAt: fresh.now(), pausedAt: null });
+  });
+
+  it("previous after the queue ran out plays the last track again", () => {
+    const { m, advance } = make();
+    m.add("c", "a", song("A", 10));
+    advance(11_000);
+    expect(m.state("c").current).toBeNull();
+    m.previous("c", null);
+    expect(titles(m)).toEqual(["A"]);
+    expect(m.state("c").current?.itemId).toBe("id1");
+  });
+
+  it("previous carries the id: two presses at once go back once", () => {
+    const { m } = make();
+    for (const t of ["A", "B", "C"]) m.add("c", "a", song(t));
+    m.skip("c", "id1");
+    m.skip("c", "id2");
+    m.previous("c", "id3");
+    m.previous("c", "id3");
+    expect(m.state("c").current?.itemId).toBe("id2");
+    expect(played(m)).toEqual(["A"]);
+  });
+
+  it("play now: a queued track starts, the current one counts as played, the rest keep their order", () => {
+    const { m, now } = make();
+    for (const t of ["A", "B", "C", "D"]) m.add("c", "a", song(t));
+    m.playNow("c", "id3");
+    expect(titles(m)).toEqual(["C", "B", "D"]);
+    expect(m.state("c").current).toEqual({ itemId: "id3", startedAt: now(), pausedAt: null });
+    expect(played(m)).toEqual(["A"]);
+    m.playNow("c", "id3"); // already playing: nothing changes
+    expect(titles(m)).toEqual(["C", "B", "D"]);
+    expect(() => m.playNow("c", "nope")).toThrow();
+  });
+
+  it("the history keeps the last 20; a leaver's files leave it, links stay", () => {
+    const { m } = make();
+    for (let i = 0; i < 25; i++) m.add("c", "a", song(`S${i}`));
+    for (let i = 1; i <= 24; i++) m.skip("c", `id${i}`);
+    expect(played(m)).toHaveLength(20);
+    expect(played(m)[0]).toBe("S4");
+    const two = make();
+    two.m.add("c", "b", song("file of b"));
+    two.m.add("c", "b", { kind: "link", title: "link of b", duration: 100, url: "https://x.test/a.mp3" });
+    two.m.add("c", "a", song("A"));
+    two.m.skip("c", "id1");
+    two.m.skip("c", "id2");
+    two.m.onLeave("c", "b", 1);
+    expect(two.m.state("c").history.map((i) => i.title)).toEqual(["link of b"]);
+  });
+
+  it("under an FM station, previous brings the track back waiting at its start", () => {
+    const { m } = make();
+    m.add("c", "a", song("A"));
+    m.add("c", "a", song("B"));
+    m.skip("c", "id1");
+    m.setStation("c", "a", { name: "FM", url: "https://fm.test/live", play: "https://fm.test/live", favicon: null });
+    m.previous("c", "id2");
+    expect(m.state("c").current).toMatchObject({ itemId: "id1", pausedAt: 0 });
+  });
+});

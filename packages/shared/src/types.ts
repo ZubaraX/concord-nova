@@ -554,6 +554,8 @@ export interface RadioStationDTO {
 export interface RadioStateDTO {
   channelId: string;
   items: RadioItemDTO[];
+  /** Tracks that played, oldest first (the last 20) — to go back to. */
+  history: RadioItemDTO[];
   current: RadioCurrentDTO | null;
   links: RadioLinkDTO[];
   /** The FM station on, if any — it plays instead of the queue (which waits, paused). */

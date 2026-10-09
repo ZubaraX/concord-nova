@@ -18,6 +18,7 @@ import { RightPanel } from "../panels/RightPanel";
 import { ModalHost } from "../modals/ModalHost";
 import { Lightbox } from "../chat/Lightbox";
 import { IncomingCall } from "../voice/IncomingCall";
+import { MusicDock } from "../voice/MusicDock";
 
 export function AppShell() {
   useGlobalEffects();
@@ -111,6 +112,7 @@ export function AppShell() {
       <QuickSwitcher />
       <Lightbox />
       <IncomingCall />
+      <MusicDock />
     </div>
   );
 }

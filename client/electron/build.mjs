@@ -8,3 +8,4 @@ buildNative();
 const common = { bundle: true, platform: "node", target: "node20", format: "cjs", external: ["electron"], logLevel: "info" };
 await build({ ...common, entryPoints: ["electron/main.cjs"], outfile: "dist-electron/main.cjs" });
 await build({ ...common, entryPoints: ["electron/preload.cjs"], outfile: "dist-electron/preload.cjs" });
+await build({ ...common, entryPoints: ["electron/music-preload.cjs"], outfile: "dist-electron/music-preload.cjs" });

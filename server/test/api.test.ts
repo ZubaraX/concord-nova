@@ -855,6 +855,16 @@ describe("radio", () => {
     const second = await api<{ id: string }>("POST", `/api/channels/${ch}/radio/items`, dj.token, { kind: "file", title: "Вторая", duration: 60 });
     expect((await api("DELETE", `/api/channels/${ch}/radio/items/${second.body.id}`, fan.token)).status).toBe(403);
 
+    // Switching: the second track now, then back to the first (the second follows it again).
+    const now = await api<{ items: { id: string }[]; current: { itemId: string }; history: { id: string }[] }>("POST", `/api/channels/${ch}/radio/items/${second.body.id}/play`, fan.token);
+    expect(now.status).toBe(200);
+    expect(now.body.current.itemId).toBe(second.body.id);
+    expect(now.body.history.map((i) => i.id)).toEqual([added.body.id]);
+    const back = await api<{ items: { id: string }[]; current: { itemId: string } }>("POST", `/api/channels/${ch}/radio/previous`, fan.token, { itemId: second.body.id });
+    expect(back.body.items.map((i) => i.id)).toEqual([added.body.id, second.body.id]);
+    expect(back.body.current.itemId).toBe(added.body.id);
+    expect((await api("POST", `/api/channels/${ch}/radio/items/01ARZ3NDEKTSV4RRFFQ69G5FAV/play`, fan.token)).status).toBe(404);
+
     // The DJ leaves: their second track goes, the current one stays.
     await voice.onLeave(dj.id, ch);
     const after = await api<{ items: { id: string }[] }>("GET", `/api/channels/${ch}/radio`, fan.token);
@@ -933,6 +943,8 @@ describe("radio", () => {
     expect((await api("POST", `/api/channels/${ch}/radio/items`, loud.token, { kind: "file", title: "Громко", duration: 10 })).status).toBe(403);
     expect((await api("POST", `/api/channels/${ch}/radio/skip`, loud.token, { itemId: song.body.id })).status).toBe(403);
     expect((await api("POST", `/api/channels/${ch}/radio/pause`, loud.token)).status).toBe(403);
+    expect((await api("POST", `/api/channels/${ch}/radio/previous`, loud.token, { itemId: song.body.id })).status).toBe(403);
+    expect((await api("POST", `/api/channels/${ch}/radio/items/${song.body.id}/play`, loud.token)).status).toBe(403);
     await voice.onLeave(loud.id, ch);
     await voice.onLeave(mod.id, ch);
   });

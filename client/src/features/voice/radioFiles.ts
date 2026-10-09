@@ -132,13 +132,14 @@ export function forgetParticipant(identity: string) {
 
 /**
  * Received files of tracks that are gone are released — gone from the queue as
- * we know it: a file can arrive before this app has the queue at all (joining).
+ * we know it (a file can arrive before this app has the queue at all: joining).
+ * The track that played last is kept, so going back to it plays at once.
  */
 useRadio.subscribe((s) => {
   const channelId = useVoice.getState().channelId;
   const st = channelId ? s.states[channelId] : undefined;
   if (!st) return;
-  const live = new Set(st.items.map((i) => i.id));
+  const live = new Set([...st.items, ...(st.history ?? []).slice(-1)].map((i) => i.id));
   let changed = false;
   for (const [id, url] of [...received]) if (!live.has(id)) (URL.revokeObjectURL(url), received.delete(id), (changed = true));
   for (const id of [...sent.keys()]) if (!live.has(id)) sent.delete(id);

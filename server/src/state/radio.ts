@@ -7,10 +7,16 @@ import { badRequest, forbidden, notFound } from "../lib/errors";
 import { toChannel } from "../gateway/io";
 
 /** A short grace after a track's end before the next starts (late starters finish it). */
-const GRACE_MS = 1500;
+const GRACE_MS = 800;
+/** Played tracks kept to go back to. */
+const HISTORY = 20;
+/** "Previous" this far into a track starts it over; nearer its start, it goes to the track before. */
+const RESTART_AFTER_MS = 5000;
 
 interface Station {
   items: RadioItemDTO[];
+  /** Played tracks, oldest first. */
+  history: RadioItemDTO[];
   current: RadioCurrentDTO | null;
   links: RadioLinkDTO[];
   timer: unknown;
@@ -34,7 +40,7 @@ export class RadioManager {
 
   state(channelId: string): RadioStateDTO {
     const s = this.stations.get(channelId);
-    return { channelId, items: s?.items ?? [], current: s?.current ?? null, links: s?.links ?? [], station: s?.fm ?? null, serverNow: this.deps.now() };
+    return { channelId, items: s?.items ?? [], history: s?.history ?? [], current: s?.current ?? null, links: s?.links ?? [], station: s?.fm ?? null, serverNow: this.deps.now() };
   }
 
   /** Turns an FM station on (or switches to another): the music waits, paused where it was. */
@@ -92,7 +98,7 @@ export class RadioManager {
     const item = s?.items.find((i) => i.id === itemId);
     if (!s || !item) throw notFound("unknown_item");
     if (item.addedBy !== userId && !moderator) throw forbidden("not_yours");
-    if (s.current?.itemId === itemId) return this.next(channelId, s);
+    if (s.current?.itemId === itemId) return this.next(channelId, s, false);
     s.items = s.items.filter((i) => i.id !== itemId);
     this.send(channelId);
   }
@@ -101,6 +107,41 @@ export class RadioManager {
   skip(channelId: string, itemId: string) {
     const s = this.stations.get(channelId);
     if (s?.current?.itemId === itemId) this.next(channelId, s);
+  }
+
+  /**
+   * Back, from the track `itemId` (null: nothing plays — e.g. the queue ran out): far into
+   * it, it starts over; near its start, the track before comes back, this one after it.
+   * The id guards like skip's: two presses at once go back once.
+   */
+  previous(channelId: string, itemId: string | null) {
+    const s = this.stations.get(channelId);
+    if (!s || (s.current?.itemId ?? null) !== itemId) return;
+    const at = s.current ? (s.current.pausedAt ?? this.deps.now() - s.current.startedAt) : 0;
+    const back = s.history.at(-1);
+    if (!back && !s.current) return;
+    if (back && at <= RESTART_AFTER_MS) {
+      s.history = s.history.slice(0, -1);
+      s.items = [back, ...s.items];
+    }
+    this.deps.clearTimer(s.timer);
+    this.start(channelId, s);
+    this.send(channelId);
+  }
+
+  /** A queued track now: the current one counts as played, the others keep their order. */
+  playNow(channelId: string, itemId: string) {
+    const s = this.stations.get(channelId);
+    const k = s ? s.items.findIndex((i) => i.id === itemId) : -1;
+    if (!s || k < 0) throw notFound("unknown_item");
+    if (k === 0) return;
+    const item = s.items[k];
+    const rest = s.items.filter((i) => i.id !== itemId);
+    if (s.current) this.played(s, rest.shift()!);
+    s.items = [item, ...rest];
+    this.deps.clearTimer(s.timer);
+    this.start(channelId, s);
+    this.send(channelId);
   }
 
   pause(channelId: string, send = true) {
@@ -131,14 +172,16 @@ export class RadioManager {
       return;
     }
     const keep = s.current?.itemId;
-    const before = s.items.length;
+    const before = s.items.length + s.history.length;
     s.items = s.items.filter((i) => i.addedBy !== userId || i.id === keep);
-    if (s.items.length !== before) this.send(channelId);
+    // Their files left with them; links can still be gone back to.
+    s.history = s.history.filter((i) => i.addedBy !== userId || i.kind === "link");
+    if (s.items.length + s.history.length !== before) this.send(channelId);
   }
 
   private station(channelId: string): Station {
     let s = this.stations.get(channelId);
-    if (!s) this.stations.set(channelId, (s = { items: [], current: null, links: [], timer: null, fm: null, heldByFm: false }));
+    if (!s) this.stations.set(channelId, (s = { items: [], history: [], current: null, links: [], timer: null, fm: null, heldByFm: false }));
     return s;
   }
 
@@ -160,11 +203,17 @@ export class RadioManager {
     s.timer = this.deps.setTimer(() => this.skip(channelId, id), Math.max(0, left));
   }
 
-  private next(channelId: string, s: Station) {
+  /** On to the next track; the one that played goes to the history (unless it was taken out). */
+  private next(channelId: string, s: Station, played = true) {
     this.deps.clearTimer(s.timer);
+    if (played && s.items[0]) this.played(s, s.items[0]);
     s.items = s.items.slice(1);
     this.start(channelId, s);
     this.send(channelId);
+  }
+
+  private played(s: Station, item: RadioItemDTO) {
+    s.history = [...s.history, item].slice(-HISTORY);
   }
 
   private send(channelId: string) {

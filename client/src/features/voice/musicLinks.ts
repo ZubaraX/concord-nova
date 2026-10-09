@@ -25,7 +25,19 @@ export function yandexEmbed(link: string): { src: string; height: number } | nul
   return null;
 }
 
-export type LinkKind = "track" | "album" | "playlist" | "artist" | "other";
+/** VK lives at vk.ru now (vk.com only sends there, and isn't reachable everywhere): its links, there. */
+export function vkHome(link: string): string {
+  try {
+    const u = new URL(link);
+    if (!/^(?:(?:www|m)\.)?vk\.com$/i.test(u.hostname)) return link;
+    u.hostname = u.hostname.replace(/^www\./i, "").replace(/vk\.com$/i, "vk.ru");
+    return u.toString();
+  } catch {
+    return link;
+  }
+}
+
+export type LinkKind ="track" | "album" | "playlist" | "artist" | "other";
 
 /** What a Yandex Music / VK link points at, for its tile. */
 export function linkKind(link: string): LinkKind {

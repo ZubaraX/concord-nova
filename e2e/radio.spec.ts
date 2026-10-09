@@ -86,9 +86,17 @@ test("radio: a file plays for everyone in step, each at their own volume; a late
   // A Yandex link isn't a track of the queue: it is a tile of its own.
   await expect(panel.locator("[data-radio-link][data-service=yandex]")).toBeVisible();
   await expect(panel.locator("[data-radio-item]")).toHaveCount(2);
+  const fileId = (await player(a.page)).itemId;
   await panel.getByRole("button", { name: "Следующий" }).click();
   await expect(panel.locator("[data-radio-item][data-current]")).toContainText("song");
   await expect.poll(async () => (await player(b.page)).paused, { timeout: 20_000 }).toBe(false);
+  // Back to the file: the listeners kept it, so it plays again at once, for everyone.
+  await panel.getByRole("button", { name: "Предыдущий" }).click();
+  await expect(panel.locator("[data-radio-item][data-current]")).toContainText("Тихая песня");
+  for (const p of [b.page, c.page]) {
+    await expect.poll(async () => (await player(p)).itemId, { timeout: 3000 }).toBe(fileId);
+    await expect.poll(async () => (await player(p)).paused, { timeout: 3000 }).toBe(false);
+  }
   noErrors(a, b, c);
 });
 
@@ -165,7 +173,7 @@ test("FM: a station from the catalog plays for everyone in the call, each at the
   noErrors(a, b);
 });
 
-test("radio: shared links are tiles (Yandex opens its own player, VK opens VK); playlists and folders fill the queue", async ({ browser, request }) => {
+test("radio: shared links are tiles that play in the corner player (desktop: Yandex and VK); playlists and folders fill the queue; switching tracks both ways", async ({ browser, request }) => {
   const { mkdtempSync, writeFileSync } = await import("node:fs");
   const { tmpdir } = await import("node:os");
   const { join } = await import("node:path");
@@ -179,20 +187,29 @@ test("radio: shared links are tiles (Yandex opens its own player, VK opens VK); 
   const panel = a.page.locator("[data-radio]");
   const link = panel.getByPlaceholder(/Ссылка на mp3/);
 
-  // Yandex: a tile; clicking it opens Yandex's own player in the panel (with a word on its volume).
+  // In the desktop app a tile plays in the player in the corner: the service's own page (its
+  // own session, pop-ups allowed for signing in), at the player's volume. VK too.
   await link.fill("https://music.yandex.ru/album/41735634/track/150614117?utm_source=desktop");
   await panel.getByRole("button", { name: "Добавить", exact: true }).click();
-  const ya = panel.locator("[data-radio-link][data-service=yandex]");
-  await expect(ya).toBeVisible();
-  await ya.click();
-  await expect(panel.locator('iframe[src="https://music.yandex.ru/iframe/album/41735634/track/150614117"]')).toBeVisible();
-  await expect(panel.getByText(/Ползунок радио не меняет громкость/)).toBeVisible();
-
-  // VK: a tile too — VK can't be embedded, so it opens VK.
+  await panel.locator("[data-radio-link][data-service=yandex]").click();
+  const dock = a.page.locator("[data-music-dock]");
+  const view = dock.locator("webview");
+  await expect(view).toHaveAttribute("src", "https://music.yandex.ru/iframe/album/41735634/track/150614117");
+  await expect(view).toHaveAttribute("partition", "persist:music");
+  await expect(view).toHaveAttribute("allowpopups", /.*/);
+  await expect(dock.locator('input[type="range"]')).toBeVisible();
   await link.fill("https://vk.com/audio_playlist-147845620_2949");
   await panel.getByRole("button", { name: "Добавить", exact: true }).click();
   await panel.locator("[data-radio-link][data-service=vk]").click();
-  await expect.poll(() => a.page.evaluate(() => (window as unknown as { __external?: string[] }).__external ?? [])).toEqual(["https://vk.com/audio_playlist-147845620_2949"]);
+  await expect(view).toHaveAttribute("src", "https://vk.ru/audio_playlist-147845620_2949");
+  expect(await a.page.evaluate(() => (window as unknown as { __external?: string[] }).__external ?? [])).toEqual([]);
+  // It outlives the panel, and folds into a bar (still there, still playing).
+  await a.page.keyboard.press("Escape");
+  await expect(panel).toBeHidden();
+  await dock.getByRole("button", { name: "Свернуть" }).click();
+  await expect(dock).toHaveAttribute("data-min", "");
+  await expect(view).toBeAttached();
+  await a.page.getByRole("button", { name: "Радио", exact: true }).last().click();
 
   // A playlist file: its web addresses join the queue (with their titles); one on a computer is left out.
   const m3u = "#EXTM3U\n#EXTINF:15,Первая\nhttps://songs.test/1.wav\n#EXTINF:15,Вторая\nhttps://songs.test/2.wav\nC:\\Music\\track.mp3\n";
@@ -212,5 +229,93 @@ test("radio: shared links are tiles (Yandex opens its own player, VK opens VK); 
   await expect(panel.locator("[data-radio-item]")).toHaveCount(4, { timeout: 20_000 });
   await expect(panel.locator("[data-radio-item]").nth(2)).toContainText("01 А");
   await expect(panel.locator("[data-radio-item]").nth(3)).toContainText("02 Б");
+
+  // Switching: any queued track now (the player goes with it), and back to the one before.
+  await expect.poll(async () => (await player(a.page)).paused, { timeout: 20_000 }).toBe(false);
+  const first = (await player(a.page)).itemId;
+  await panel.locator("[data-radio-item]").nth(3).getByRole("button", { name: "Включить сейчас" }).click();
+  await expect(panel.locator("[data-radio-item][data-current]")).toContainText("02 Б");
+  await expect.poll(async () => (await player(a.page)).itemId).not.toBe(first);
+  await expect.poll(async () => (await player(a.page)).paused, { timeout: 20_000 }).toBe(false);
+  await panel.getByRole("button", { name: "Предыдущий" }).click();
+  await expect(panel.locator("[data-radio-item][data-current]")).toContainText("Первая");
+  await expect(panel.locator("[data-radio-item]").nth(1)).toContainText("02 Б");
+  await expect.poll(async () => (await player(a.page)).itemId).toBe(first);
+  await expect.poll(async () => (await player(a.page)).paused, { timeout: 20_000 }).toBe(false);
   noErrors(a);
+});
+
+test("radio in a browser: a Yandex tile plays in the corner player (at the system's volume); a VK tile opens VK", async ({ browser, request }) => {
+  const alice = await register(request, "Алиса");
+  const { guild, voice } = await guildWith(request, alice, []);
+  const a = await openAs(browser, alice, `/#/channels/${guild.id}/${voice.id}`);
+  await a.page.route("https://music.yandex.ru/iframe/**", (route) => route.fulfill({ status: 200, contentType: "text/html", body: "<html><body>Яндекс плеер</body></html>" }));
+  await a.context.route("https://vk.ru/**", (route) => route.fulfill({ status: 200, contentType: "text/html", body: "<html><body>VK</body></html>" }));
+  await a.page.getByRole("button", { name: "Зайти в канал" }).click();
+  await a.page.getByRole("button", { name: "Радио", exact: true }).last().click();
+  const panel = a.page.locator("[data-radio]");
+  const link = panel.getByPlaceholder(/Ссылка на mp3/);
+
+  await link.fill("https://music.yandex.ru/album/41735634/track/150614117");
+  await panel.getByRole("button", { name: "Добавить", exact: true }).click();
+  await panel.locator("[data-radio-link][data-service=yandex]").click();
+  const dock = a.page.locator("[data-music-dock]");
+  await expect(dock.locator('iframe[src="https://music.yandex.ru/iframe/album/41735634/track/150614117"]')).toBeVisible();
+  await expect(dock.getByText(/громкостью системы/)).toBeVisible();
+  await expect(dock.locator("webview")).toHaveCount(0);
+
+  await link.fill("https://vk.com/audio_playlist-147845620_2949");
+  await panel.getByRole("button", { name: "Добавить", exact: true }).click();
+  const [vk] = await Promise.all([a.context.waitForEvent("page"), panel.locator("[data-radio-link][data-service=vk]").click()]);
+  await expect.poll(() => vk.url()).toBe("https://vk.ru/audio_playlist-147845620_2949");
+  noErrors(a);
+});
+
+test("the music player's volume (the desktop app's script in the service's page): sound follows it, the page keeps its own", async ({ page }) => {
+  const { readFileSync } = await import("node:fs");
+  const { resolve } = await import("node:path");
+  const script = readFileSync(resolve("client/electron/music-preload.cjs"), "utf8");
+  await page.addInitScript(() => {
+    (window as unknown as { realVolume: () => number }).realVolume = Object.getOwnPropertyDescriptor(HTMLMediaElement.prototype, "volume")!.get!;
+  });
+  await page.addInitScript({ content: script + "\ninstallVolume();" });
+  await page.goto("data:text/html,<audio id=tag></audio>");
+  const r = await page.evaluate(() => {
+    const w = window as unknown as { realVolume: () => number; __novaVolume: (f: number) => void };
+    const real = (el: HTMLMediaElement) => w.realVolume.call(el);
+    const a = new Audio();
+    a.volume = 0.8; // the page's own
+    const tag = document.getElementById("tag") as HTMLAudioElement;
+    void tag.play().catch(() => {});
+    w.__novaVolume(0.5);
+    const first = { page: a.volume, a: real(a), tag: real(tag) };
+    a.volume = 0.6;
+    const second = { page: a.volume, a: real(a) };
+    let bad = "";
+    try {
+      a.volume = 2;
+    } catch (e) {
+      bad = (e as Error).name;
+    }
+    // Web Audio: the speakers can still be connected and disconnected; an element played
+    // through it isn't turned down twice.
+    const ctx = new AudioContext();
+    const osc = ctx.createOscillator();
+    osc.connect(ctx.destination);
+    osc.disconnect(ctx.destination);
+    osc.connect(ctx.destination);
+    osc.disconnect();
+    const c = new Audio();
+    c.volume = 0.9;
+    ctx.createMediaElementSource(c);
+    return { first, second, bad, routed: real(c), dest: ctx.destination instanceof AudioDestinationNode };
+  });
+  expect(r.first.page).toBeCloseTo(0.8);
+  expect(r.first.a).toBeCloseTo(0.4);
+  expect(r.first.tag).toBeCloseTo(0.5);
+  expect(r.second.page).toBeCloseTo(0.6);
+  expect(r.second.a).toBeCloseTo(0.3);
+  expect(r.bad).toBe("IndexSizeError");
+  expect(r.routed).toBeCloseTo(0.9);
+  expect(r.dest).toBe(true);
 });

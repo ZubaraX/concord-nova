@@ -105,8 +105,10 @@ function createWindow() {
       sandbox: true,
       spellcheck: true,
       backgroundThrottling: false, // calls keep working in the background
+      webviewTag: true, // the music player — see "the music player" below
     },
   });
+  wireMusicPlayer(win.webContents);
   if (st.maximized) win.maximize();
   win.once("ready-to-show", () => win?.show());
 
@@ -340,6 +342,55 @@ ipcMain.on("open-external", (_e, url) => /^https?:/i.test(url) && void shell.ope
 ipcMain.on("close-to-tray", (_e, on) => (closeToTray = !!on));
 ipcMain.on("autolaunch", (_e, on) => app.setLoginItemSettings({ openAtLogin: !!on, args: ["--hidden"] }));
 
+// ── the music player (VK, Yandex Music) ──────────────────────────────────────
+// Shared links play in a <webview>: the service's own site, in a session of its
+// own (you sign in to VK / Yandex there once; the app never sees it), held to
+// those sites. music-preload.cjs lets the app set its volume.
+const MUSIC_PARTITION = "persist:music";
+const MUSIC_HOSTS = /^(?:[\w-]+\.)*(?:vk\.com|vk\.ru|vk\.me|vkvideo\.ru|userapi\.com|yandex\.(?:ru|com|by|kz|uz|net)|ya\.ru)$/i;
+const musicUrlAllowed = (url) => {
+  try {
+    const u = new URL(url);
+    return u.protocol === "https:" && MUSIC_HOSTS.test(u.hostname);
+  } catch {
+    return false;
+  }
+};
+
+function wireMusicPlayer(contents) {
+  contents.on("will-attach-webview", (e, prefs, params) => {
+    if (params.partition !== MUSIC_PARTITION || !musicUrlAllowed(params.src)) return e.preventDefault();
+    prefs.preload = path.join(__dirname, "music-preload.cjs");
+    Object.assign(prefs, { nodeIntegration: false, nodeIntegrationInSubFrames: false, contextIsolation: true, sandbox: true, webSecurity: true });
+  });
+}
+
+app.on("web-contents-created", (_e, contents) => {
+  if (contents.getType() !== "webview") return;
+  // The sites' own links and pop-ups (signing in) stay in the player; anything else opens in the browser.
+  contents.setWindowOpenHandler(({ url }) => {
+    if (musicUrlAllowed(url)) void contents.loadURL(url);
+    else if (/^https?:/i.test(url)) void shell.openExternal(url);
+    return { action: "deny" };
+  });
+  contents.on("will-navigate", (e, url) => {
+    if (musicUrlAllowed(url)) return;
+    e.preventDefault();
+    if (/^https?:/i.test(url)) void shell.openExternal(url);
+  });
+});
+
+function setupMusicSession() {
+  const music = session.fromPartition(MUSIC_PARTITION);
+  // A plain browser's name: sign-in pages may turn "Electron" away.
+  const ua = music.getUserAgent();
+  const chrome = /Chrome\/[\d.]+/.exec(ua)?.[0];
+  if (chrome) music.setUserAgent(ua.replace(/\(KHTML, like Gecko\).*$/, `(KHTML, like Gecko) ${chrome} Safari/537.36`));
+  // Playing needs no permissions; full screen and copying a link are all it may ask for.
+  music.setPermissionRequestHandler((_wc, permission, cb) => cb(["fullscreen", "clipboard-sanitized-write"].includes(permission)));
+  music.setPermissionCheckHandler((_wc, permission) => permission === "clipboard-sanitized-write");
+}
+
 // ── global shortcuts ─────────────────────────────────────────────────────────
 const toAccelerator = (combo) =>
   combo
@@ -513,6 +564,7 @@ app.whenReady().then(() => {
   }
 
   wireDisplayMedia();
+  setupMusicSession();
   createWindow();
   createTray();
   wireUpdates();

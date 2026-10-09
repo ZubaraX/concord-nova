@@ -1,7 +1,7 @@
 // The radio of a voice channel: only people in that call may change it.
 import type { FastifyInstance } from "fastify";
 import { z } from "zod";
-import { Permission, isMusicServiceLink, radioItemCreateSchema, radioLinkCreateSchema, radioSkipSchema, radioStationSchema, zId } from "@nova/shared";
+import { Permission, isMusicServiceLink, radioItemCreateSchema, radioLinkCreateSchema, radioPreviousSchema, radioSkipSchema, radioStationSchema, zId } from "@nova/shared";
 import { config } from "../config";
 import { authenticate } from "../lib/auth";
 import { ApiError, badRequest, forbidden, parse } from "../lib/errors";
@@ -76,6 +76,18 @@ export async function radioRoutes(app: FastifyInstance) {
     const { id } = parse(params, req.params);
     maySpeak(req.auth.userId, id);
     radio.skip(id, parse(radioSkipSchema, req.body).itemId);
+    return radio.state(id);
+  });
+  app.post("/api/channels/:id/radio/previous", async (req) => {
+    const { id } = parse(params, req.params);
+    maySpeak(req.auth.userId, id);
+    radio.previous(id, parse(radioPreviousSchema, req.body).itemId);
+    return radio.state(id);
+  });
+  app.post("/api/channels/:id/radio/items/:itemId/play", async (req) => {
+    const { id, itemId } = parse(itemParams, req.params);
+    maySpeak(req.auth.userId, id);
+    radio.playNow(id, itemId);
     return radio.state(id);
   });
   // FM: the stations to choose from — served from here, not the (blocked in Russia) catalogue site.

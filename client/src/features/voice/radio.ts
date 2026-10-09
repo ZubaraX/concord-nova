@@ -49,6 +49,9 @@ const mine = new Map<string, File>();
 /** A file you added (to play yourself and to send to the others). */
 export const myFile = (itemId: string) => mine.get(itemId);
 
+/** A track's length for the server, to a tenth of a second (rounded up whole, it left a gap after each track). */
+const seconds = (d: number) => Math.max(1, Math.round(d * 10) / 10);
+
 /** How long a file or link plays, by asking an audio element; null if it isn't playable audio. */
 function probe(src: string): Promise<number | null> {
   return new Promise((resolve) => {
@@ -107,10 +110,10 @@ export async function addFiles(channelId: string, files: File[]) {
       continue;
     }
     try {
-      const item = await api<RadioItemDTO>(`/api/channels/${channelId}/radio/items`, { method: "POST", body: { kind: "file", title: titleOf(file.name), duration: Math.ceil(duration) } });
+      const item = await api<RadioItemDTO>(`/api/channels/${channelId}/radio/items`, { method: "POST", body: { kind: "file", title: titleOf(file.name), duration: seconds(duration) } });
       mine.set(item.id, file);
       useRadio.setState((s) => ({ mineRev: s.mineRev + 1 }));
-      diag("radio", "added file", { item: item.id, size: file.size, duration: Math.ceil(duration) });
+      diag("radio", "added file", { item: item.id, size: file.size, duration: seconds(duration) });
     } catch (e) {
       toast(errorText(e), "error");
     }
@@ -129,7 +132,7 @@ export async function addLink(channelId: string, raw: string, title?: string) {
     if (!duration) return toast(t("radio.linkNotAudio"), "error");
     if (duration > RADIO_MAX_SECONDS) return toast(t("radio.tooLong", { name: url }), "error");
     const name = new URL(url).pathname.split("/").filter(Boolean).pop() ?? url;
-    await api(`/api/channels/${channelId}/radio/items`, { method: "POST", body: { kind: "link", url, title: title?.trim().slice(0, 200) || titleOf(name, true), duration: Math.ceil(duration) } });
+    await api(`/api/channels/${channelId}/radio/items`, { method: "POST", body: { kind: "link", url, title: title?.trim().slice(0, 200) || titleOf(name, true), duration: seconds(duration) } });
   } catch (e) {
     toast(errorText(e), "error");
   }
@@ -141,12 +144,21 @@ export const skip = (channelId: string) => {
   const id = useRadio.getState().states[channelId]?.current?.itemId;
   if (id) void act(api(`/api/channels/${channelId}/radio/skip`, { method: "POST", body: { itemId: id } }));
 };
+/** Back: near a track's start the one before it, further in this one from its start (the server decides). */
+export const previous = (channelId: string) => {
+  const id = useRadio.getState().states[channelId]?.current?.itemId ?? null;
+  void act(api(`/api/channels/${channelId}/radio/previous`, { method: "POST", body: { itemId: id } }));
+};
+export const playNow = (channelId: string, itemId: string) => act(api(`/api/channels/${channelId}/radio/items/${itemId}/play`, { method: "POST" }));
 export const pause = (channelId: string) => act(api(`/api/channels/${channelId}/radio/pause`, { method: "POST" }));
 export const resume = (channelId: string) => act(api(`/api/channels/${channelId}/radio/resume`, { method: "POST" }));
 
-/** Files of yours whose tracks were in the queue and left it can go (not before: the add's answer can come before the server's update). */
+/**
+ * Files of yours whose tracks left the queue and the history (played ones are kept to go
+ * back to) can go — not before: the add's answer can come before the server's update.
+ */
 const seenMine = new Set<string>();
 useRadio.subscribe((s) => {
-  const live = new Set(Object.values(s.states).flatMap((st) => st.items.map((i) => i.id)));
+  const live = new Set(Object.values(s.states).flatMap((st) => [...st.items, ...(st.history ?? [])].map((i) => i.id)));
   for (const id of goneIds([...mine.keys()], seenMine, live)) mine.delete(id);
 });

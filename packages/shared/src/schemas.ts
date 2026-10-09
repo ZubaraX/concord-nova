@@ -335,6 +335,8 @@ export const radioItemCreateSchema = z
   .refine((v) => (v.kind === "link") === !!v.url, { message: "url_required_for_links", path: ["url"] });
 export const radioLinkCreateSchema = z.object({ url: zHttpUrl, title: z.string().trim().max(200).optional() });
 export const radioSkipSchema = z.object({ itemId: zId });
+/** "Previous" from the track playing (null: none plays). */
+export const radioPreviousSchema = z.object({ itemId: zId.nullable() });
 export const radioStationSchema = z.object({ name: z.string().trim().min(1).max(120), url: zHttpUrl, favicon: zHttpUrl.optional(), uuid: z.string().max(64).optional() });
 
 /** Yandex Music or VK links: shared as cards (no third-party playback exists). */

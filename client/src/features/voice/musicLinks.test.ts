@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { linkKind, parsePlaylist, yandexEmbed } from "./musicLinks";
+import { linkKind, parsePlaylist, vkHome, yandexEmbed } from "./musicLinks";
 
 describe("Yandex Music links → the official player", () => {
   it("a track, an album and a playlist each get the widget Yandex itself offers", () => {
@@ -41,5 +41,15 @@ describe("what a shared link is, for its tile", () => {
     expect(linkKind("https://vk.com/music/playlist/-147845620_2949")).toBe("playlist");
     expect(linkKind("https://vk.com/audio?z=audio-2001_123")).toBe("track");
     expect(linkKind("https://vk.com/audios123")).toBe("other");
+  });
+});
+
+describe("VK links open at vk.ru", () => {
+  it("vk.com, www and m. move over; everything else stays", () => {
+    expect(vkHome("https://vk.com/audio_playlist-147845620_2949")).toBe("https://vk.ru/audio_playlist-147845620_2949");
+    expect(vkHome("https://www.vk.com/music/playlist/-1_2?x=1")).toBe("https://vk.ru/music/playlist/-1_2?x=1");
+    expect(vkHome("https://m.vk.com/audio")).toBe("https://m.vk.ru/audio");
+    expect(vkHome("https://vk.ru/audio")).toBe("https://vk.ru/audio");
+    expect(vkHome("https://notvk.com/a")).toBe("https://notvk.com/a");
   });
 });

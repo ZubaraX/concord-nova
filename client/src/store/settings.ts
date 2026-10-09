@@ -75,6 +75,8 @@ export interface LocalSettings {
   radioVolume: number;
   /** How loud the call's FM station plays for you, 0–100. */
   fmVolume: number;
+  /** How loud the music player (Yandex Music / VK, desktop app) plays, 0–100. */
+  musicVolume: number;
   joinMuted: boolean;
   userVolumes: Record<string, number>;
   streamVolumes: Record<string, number>;
@@ -165,6 +167,7 @@ const LOCAL_DEFAULTS: LocalSettings = {
   streamInfo: false,
   radioVolume: 60,
   fmVolume: 60,
+  musicVolume: 60,
   joinMuted: false,
   userVolumes: {},
   streamVolumes: {},

@@ -1,9 +1,9 @@
 // The call's radio: what plays, your own volume, the queue, adding files or a
-// link, and the Yandex/VK links people shared (tiles).
+// link, and the Yandex/VK links people shared (tiles; they play in MusicDock).
 import { useEffect, useRef, useState } from "react";
 import clsx from "clsx";
 import { useShallow } from "zustand/react/shallow";
-import { ExternalLink, FolderOpen, ListMusic, Music, Pause, Play, Plus, SkipForward, Upload, X } from "lucide-react";
+import { ExternalLink, FolderOpen, ListMusic, Music, Pause, Play, Plus, SkipBack, SkipForward, Upload, X } from "lucide-react";
 import type { RadioLinkDTO } from "@nova/shared";
 import { t } from "../../lib/i18n";
 import { isDesktop } from "../../lib/platform";
@@ -13,8 +13,9 @@ import { settings, useSettings } from "../../store/settings";
 import { Popover, Tooltip, usePopover } from "../../components/ui/overlay";
 import { Slider } from "../../components/ui/primitives";
 import { useVoice } from "./voice";
-import { addFiles, addFolder, addLink, myFile, pause, removeItem, resume, serverNow, skip, useRadio } from "./radio";
-import { linkKind, yandexEmbed } from "./musicLinks";
+import { addFiles, addFolder, addLink, myFile, pause, playNow, previous, removeItem, resume, serverNow, skip, useRadio } from "./radio";
+import { linkKind, vkHome } from "./musicLinks";
+import { openMusic, playsHere, useMusic } from "./music";
 import { useRadioFiles } from "./radioFiles";
 
 const fmt = (s: number) => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`;
@@ -56,12 +57,10 @@ export function RadioPanel({ channelId }: { channelId: string }) {
   // A new list each time: compared by its names, or every read looks like a change (and React loops).
   const names = useData(useShallow((s) => (st?.items ?? []).map((i) => displayName(s, i.addedBy, null))));
   const waiting = now && now.kind === "file" && !myFile(now.id) && !ready[now.id];
+  const last = st?.history?.at(-1);
   const links = (st?.links ?? []).slice().reverse();
   const linkNames = useData(useShallow((s) => links.map((l) => displayName(s, l.addedBy, null))));
-  // The Yandex player opened from a tile (one at a time).
-  const [openId, setOpenId] = useState<string | null>(null);
-  const opened = links.find((l) => l.id === openId);
-  const player = opened ? yandexEmbed(opened.url) : null;
+  const playing = useMusic((s) => s.link?.id);
 
   return (
     <div
@@ -95,6 +94,9 @@ export function RadioPanel({ channelId }: { channelId: string }) {
           <div className="mt-1 flex items-center justify-between text-[11.5px] tabular-nums text-fg-3">
             <span>{fmt(pos)}</span>
             <div className="flex gap-1">
+              <button onClick={() => previous(channelId)} className="rounded-lg p-1.5 text-fg-2 hover:bg-raised hover:text-fg" aria-label={t("radio.previous")} title={t("radio.previousHint")}>
+                <SkipBack size={16} />
+              </button>
               {cur!.pausedAt !== null ? (
                 <button onClick={() => void resume(channelId)} className="rounded-lg p-1.5 text-fg-2 hover:bg-raised hover:text-fg" aria-label={t("radio.play")}>
                   <Play size={16} />
@@ -112,7 +114,16 @@ export function RadioPanel({ channelId }: { channelId: string }) {
           </div>
         </div>
       ) : (
-        <p className="text-[13px] text-fg-3">{t("radio.nothing")}</p>
+        <div className="flex flex-col items-start gap-2">
+          <p className="text-[13px] text-fg-3">{t("radio.nothing")}</p>
+          {/* The queue ran out: the last track again, a press away. */}
+          {last && (
+            <button onClick={() => previous(channelId)} className="flex max-w-full items-center gap-1.5 rounded-lg bg-raised px-2.5 py-1.5 text-[12.5px] font-semibold hover:bg-overlay" aria-label={t("radio.previous")}>
+              <SkipBack size={14} className="shrink-0" />
+              <span className="truncate">{t("radio.again", { title: last.title })}</span>
+            </button>
+          )}
+        </div>
       )}
 
       <div className="flex items-center gap-2.5">
@@ -131,6 +142,11 @@ export function RadioPanel({ channelId }: { channelId: string }) {
                   {names[k]} · {fmt(i.duration)}
                 </div>
               </div>
+              {!(k === 0 && cur) && (
+                <button onClick={() => void playNow(channelId, i.id)} className="rounded p-1 text-fg-3 opacity-0 hover:text-star group-hover:opacity-100 touch-visible" aria-label={t("radio.playNow")} title={t("radio.playNow")}>
+                  <Play size={14} />
+                </button>
+              )}
               <button onClick={() => void removeItem(channelId, i.id)} className="rounded p-1 text-fg-3 opacity-0 hover:text-bad group-hover:opacity-100 touch-visible" aria-label={t("radio.remove")}>
                 <X size={14} />
               </button>
@@ -169,37 +185,18 @@ export function RadioPanel({ channelId }: { channelId: string }) {
       {links.length > 0 && (
         <div className="flex flex-col gap-2">
           <div className="text-[11.5px] font-semibold text-fg-3">{t("radio.shared")}</div>
-          {/* Yandex: its own player, which each person plays on their device with their own account. */}
-          {opened && player && (
-            <div className="flex flex-col gap-1">
-              <div className="relative">
-                <iframe
-                  src={player.src}
-                  title={opened.title ?? opened.url}
-                  allow="clipboard-write; autoplay; encrypted-media"
-                  className="w-full rounded-lg border-0 bg-canvas"
-                  style={{ height: player.height }}
-                />
-                <button onClick={() => setOpenId(null)} className="absolute -right-1.5 -top-1.5 grid h-6 w-6 place-items-center rounded-full bg-raised text-fg-2 shadow ring-1 ring-line/15 hover:text-fg" aria-label={t("radio.closePlayer")}>
-                  <X size={13} />
-                </button>
-              </div>
-              <span className="text-[11px] leading-snug text-fg-3">{t("radio.yandexHint")}</span>
-              <span className="text-[11px] leading-snug text-warn">{t("radio.playerVolume")}</span>
-            </div>
-          )}
           <div className="grid grid-cols-3 gap-2">
             {links.map((l, k) => (
               <LinkTile
                 key={l.id}
                 link={l}
                 by={linkNames[k]}
-                active={l.id === openId}
-                onOpen={() => (yandexEmbed(l.url) ? setOpenId(l.id === openId ? null : l.id) : openOutside(l.url))}
+                active={l.id === playing}
+                onOpen={() => (playsHere(l) ? openMusic(l) : openOutside(vkHome(l.url)))}
               />
             ))}
           </div>
-          <p className="text-[11px] leading-snug text-fg-3">{t("radio.sharedHint")}</p>
+          <p className="text-[11px] leading-snug text-fg-3">{isDesktop ? t("radio.sharedHint") : t("radio.sharedHintWeb")}</p>
         </div>
       )}
       <p className="text-[11.5px] leading-snug text-fg-3">{t("radio.hint")}</p>
@@ -210,7 +207,7 @@ export function RadioPanel({ channelId }: { channelId: string }) {
 /** A shared Yandex Music / VK link: its cover, title and who shared it. */
 function LinkTile({ link, by, active, onOpen }: { link: RadioLinkDTO; by: string; active: boolean; onOpen: () => void }) {
   const kind = t(`radio.kind.${linkKind(link.url)}`);
-  const here = !!yandexEmbed(link.url);
+  const here = playsHere(link);
   return (
     <button
       data-radio-link
@@ -232,7 +229,7 @@ function LinkTile({ link, by, active, onOpen }: { link: RadioLinkDTO; by: string
   );
 }
 
-/** VK (it can't be embedded) and Yandex links without a player: their site or app. */
+/** In a browser, VK (it can't be embedded there) and Yandex links without a widget: their site or app. */
 function openOutside(url: string) {
   if (isDesktop) window.nova!.openExternal(url);
   else window.open(url, "_blank", "noopener");
