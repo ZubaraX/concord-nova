@@ -598,6 +598,7 @@ export async function joinVoice(channelId: string, isRejoin = false) {
   bump();
   watchAlone();
   void loadRadio(channelId);
+  void import("./radioPlayer");
   // The soundboard's files, once the call has settled (decoding them while joining would crackle).
   const guildId = data().channels[channelId]?.guildId ?? null;
   setTimeout(() => void clips().then((m) => m.prefetchSounds(guildId)), 5000);
