@@ -40,8 +40,9 @@ if (admin && !/^@?[\w.+-]+(@[\w.-]+)?$/.test(admin)) {
 }
 
 // ── collect files ─────────────────────────────────────────────────────────────
-const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "dist-electron", "release", ".livekit", ".playwright-mcp", ".test-data", "data", "coverage", ".gradle", "build-output"]);
-const SKIP_PATHS = new Set(["client/android", "client/build/.cache"]);
+const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "dist-electron", "release", ".livekit", ".playwright-mcp", ".test-data", "coverage", ".gradle", "build-output"]);
+// The local database and uploads (data/, server/data/) stay here; server/src/data (the FM catalogue) is source.
+const SKIP_PATHS = new Set(["data", "server/data", "client/android", "client/build/.cache"]);
 const SKIP_FILE = (name) => name === ".env" || /\.db(-journal|-wal|-shm)?$/.test(name) || name.endsWith(".log");
 const files = [];
 (function walk(dir) {
