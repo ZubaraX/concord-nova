@@ -41,7 +41,7 @@ export const en: Dict = {
     nowPlaying: "Now playing",
     addedBy: "added by {name}",
     nothing: "Quiet. Add music — everyone in the call hears it.",
-    queue: "Up next",
+    queue: "Queue",
     shared: "Shared",
     openIn: { yandex: "Open in Yandex Music", vk: "Open in VK" },
     volume: "Radio volume",

@@ -25,6 +25,7 @@ import { mediaUrl } from "../../lib/server";
 import { can, channelPerms, displayName, guildPerms, isMuted, isUnread, useData, voiceMembers } from "../../store/data";
 import { navigate, useUI } from "../../store/ui";
 import { joinVoice, useVoice } from "../voice/voice";
+import { RadioLine } from "../voice/RadioPanel";
 import { useAura } from "../voice/levels";
 import { MenuList, Popover, usePopover, useContextMenu, Tooltip } from "../../components/ui/overlay";
 import { UserAvatar } from "../../components/ui/avatar";
@@ -269,6 +270,7 @@ const VoiceChannelRow = memo(function VoiceChannelRow({ channel }: { channel: Ch
           </button>
         )}
       </div>
+      <RadioLine channelId={channel.id} />
       {members.length > 0 && (
         <div className="mb-1 ml-6 mt-0.5 flex flex-col">
           {members.map((v) => (

@@ -12,8 +12,10 @@ interface RadioStore {
   states: Record<string, RadioStateDTO>;
   /** Server clock − this one, ms. */
   offset: number;
+  /** Bumped when a file of yours joins: the server's update often arrives before the add returns, and the file must still go out. */
+  mineRev: number;
 }
-export const useRadio = create<RadioStore>(() => ({ states: {}, offset: 0 }));
+export const useRadio = create<RadioStore>(() => ({ states: {}, offset: 0, mineRev: 0 }));
 
 /** Offsets seen recently: delays only make one look smaller, so the largest is the truest. */
 const seen: { at: number; v: number }[] = [];
@@ -81,6 +83,7 @@ export async function addFiles(channelId: string, files: File[]) {
     try {
       const item = await api<RadioItemDTO>(`/api/channels/${channelId}/radio/items`, { method: "POST", body: { kind: "file", title: titleOf(file.name), duration: Math.ceil(duration) } });
       mine.set(item.id, file);
+      useRadio.setState((s) => ({ mineRev: s.mineRev + 1 }));
       diag("radio", "added file", { item: item.id, size: file.size, duration: Math.ceil(duration) });
     } catch (e) {
       toast(errorText(e), "error");

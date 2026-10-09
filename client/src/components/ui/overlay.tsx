@@ -145,9 +145,15 @@ export function Popover({
 
   useLayoutEffect(() => {
     if (!anchor || !ref.current) return setPos(null);
+    const el = ref.current;
     // Layout size, not the painted box: a reopened popover is already mid pop-in
     // (scaled down), and measuring that put it a few pixels off its anchor.
-    setPos(place(anchor, ref.current.offsetWidth, ref.current.offsetHeight, placement, gap));
+    const measure = () => setPos(place(anchor, el.offsetWidth, el.offsetHeight, placement, gap));
+    measure();
+    // Content that grows or shrinks while open (a queue, a list loading) is placed again, so it stays on screen.
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => ro.disconnect();
   }, [anchor, placement, gap]);
 
   useEffect(() => {

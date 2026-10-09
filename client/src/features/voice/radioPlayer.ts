@@ -8,6 +8,10 @@ import { useVoice } from "./voice";
 
 const el = new Audio();
 el.preload = "auto";
+// In the page (hidden), so it can be found — the tests read it as it is.
+el.dataset.radioPlayer = "";
+el.style.display = "none";
+document.body.appendChild(el);
 let srcFor: string | null = null;
 let ownUrl: string | null = null;
 
@@ -39,6 +43,7 @@ function sync() {
       el.removeAttribute("src");
       el.load();
       srcFor = null;
+      delete el.dataset.item;
     }
     return;
   }
@@ -46,6 +51,7 @@ function sync() {
   if (!src) return; // the file is on its way
   if (srcFor !== item.id) {
     srcFor = item.id;
+    el.dataset.item = item.id;
     el.src = src;
   }
   const target = (cur.pausedAt ?? serverNow() - cur.startedAt) / 1000;
@@ -65,6 +71,7 @@ useSettings.subscribe((s, p) => {
   if (s.radioVolume !== p.radioVolume || s.outputVolume !== p.outputVolume || s.outputDevice !== p.outputDevice) sync();
 });
 setInterval(sync, 1000);
+sync();
 
 export function radioPlayerState() {
   return { itemId: srcFor, src: el.currentSrc || null, time: el.currentTime, volume: el.volume, paused: el.paused };

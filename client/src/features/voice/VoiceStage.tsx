@@ -40,6 +40,7 @@ import { UserAvatar } from "../../components/ui/avatar";
 import { toggleLocalMute, userMenu } from "../shell/menus";
 import { PingButton } from "./ConnectionStats";
 import { SoundboardButton } from "./Soundboard";
+import { RadioButton } from "./RadioPanel";
 import { useSoundboard } from "./clips";
 import { useStreamStats } from "./streamStats";
 import { fmtBitrate, presetSpecs } from "./ScreenQualityPicker";
@@ -473,6 +474,7 @@ function Controls({
           </button>
         </Tooltip>
         <SoundboardButton className={clsx(btn, neutral)} />
+        <RadioButton className={clsx(btn, neutral)} />
         {onToggleChat && (
           <Tooltip content={t("voice.chat")}>
             <button onClick={onToggleChat} className={clsx(btn, chatOpen ? "bg-star/25 text-star" : neutral)} aria-label={t("voice.chat")}>

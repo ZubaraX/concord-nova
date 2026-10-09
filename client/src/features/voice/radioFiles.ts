@@ -57,9 +57,15 @@ export async function sendRadioFiles(newcomer?: string) {
   }
 }
 
-/** Received files of tracks that are gone are released. */
+/**
+ * Received files of tracks that are gone are released — gone from the queue as
+ * we know it: a file can arrive before this app has the queue at all (joining).
+ */
 useRadio.subscribe((s) => {
-  const live = new Set(Object.values(s.states).flatMap((st) => st.items.map((i) => i.id)));
+  const channelId = useVoice.getState().channelId;
+  const st = channelId ? s.states[channelId] : undefined;
+  if (!st) return;
+  const live = new Set(st.items.map((i) => i.id));
   let changed = false;
   for (const [id, url] of [...received]) if (!live.has(id)) (URL.revokeObjectURL(url), received.delete(id), (changed = true));
   for (const id of [...sent.keys()]) if (!live.has(id)) sent.delete(id);
