@@ -7,6 +7,8 @@ import { api } from "../../lib/api";
 import { bus, toast } from "../../lib/bus";
 import { diag } from "../../lib/diag";
 import { errorText, t } from "../../lib/i18n";
+import { data } from "../../store/data";
+import { goneIds, isNewer, titleOf } from "./radioSync";
 
 interface RadioStore {
   states: Record<string, RadioStateDTO>;
@@ -29,10 +31,13 @@ export const serverNow = () => Date.now() + useRadio.getState().offset;
 
 function put(s: RadioStateDTO) {
   learn(s.serverNow);
-  useRadio.setState((r) => ({ states: { ...r.states, [s.channelId]: s } }));
+  useRadio.setState((r) => (isNewer(r.states[s.channelId], s) ? { states: { ...r.states, [s.channelId]: s } } : r));
 }
 bus.on("dispatch", (e) => {
   if (e.t === "RADIO_STATE") put(e.d);
+  // On every (re)connect: the radio of each channel with people in it, afresh — the sidebar line
+  // after the app opens, and no ghost queue after the server restarted (a deploy).
+  if (e.t === "READY") for (const id of new Set(Object.values(data().voiceStates).map((v) => v.channelId))) if (id) void loadRadio(id);
 });
 
 export async function loadRadio(channelId: string) {
@@ -61,7 +66,6 @@ function probe(src: string): Promise<number | null> {
   });
 }
 
-const titleOf = (name: string) => decodeURIComponent(name.replace(/\.[^.\/]+$/, "")).replace(/[_]+/g, " ").trim().slice(0, 200) || "—";
 
 export async function addFiles(channelId: string, files: File[]) {
   for (const file of files) {
@@ -103,7 +107,7 @@ export async function addLink(channelId: string, raw: string) {
     if (!duration) return toast(t("radio.linkNotAudio"), "error");
     if (duration > RADIO_MAX_SECONDS) return toast(t("radio.tooLong", { name: url }), "error");
     const name = new URL(url).pathname.split("/").filter(Boolean).pop() ?? url;
-    await api(`/api/channels/${channelId}/radio/items`, { method: "POST", body: { kind: "link", url, title: titleOf(name), duration: Math.ceil(duration) } });
+    await api(`/api/channels/${channelId}/radio/items`, { method: "POST", body: { kind: "link", url, title: titleOf(name, true), duration: Math.ceil(duration) } });
   } catch (e) {
     toast(errorText(e), "error");
   }
@@ -118,8 +122,9 @@ export const skip = (channelId: string) => {
 export const pause = (channelId: string) => act(api(`/api/channels/${channelId}/radio/pause`, { method: "POST" }));
 export const resume = (channelId: string) => act(api(`/api/channels/${channelId}/radio/resume`, { method: "POST" }));
 
-/** Files of yours that left the queue can go. */
+/** Files of yours whose tracks were in the queue and left it can go (not before: the add's answer can come before the server's update). */
+const seenMine = new Set<string>();
 useRadio.subscribe((s) => {
   const live = new Set(Object.values(s.states).flatMap((st) => st.items.map((i) => i.id)));
-  for (const id of [...mine.keys()]) if (!live.has(id)) mine.delete(id);
+  for (const id of goneIds([...mine.keys()], seenMine, live)) mine.delete(id);
 });

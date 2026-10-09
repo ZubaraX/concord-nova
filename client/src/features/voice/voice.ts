@@ -38,7 +38,7 @@ import { MicProcessor } from "./processor";
 import { appAudioTrack, stopAppAudio } from "./appAudio";
 import { useExpressions } from "./expressions";
 import { captureSize, resolveScreenPreset, type ScreenCodec, type ScreenPreset } from "./screenQuality";
-import { clearRadioFiles, onRadioStream, RADIO_TOPIC, sendRadioFiles } from "./radioFiles";
+import { clearRadioFiles, forgetParticipant, onRadioNeed, onRadioStream, RADIO_TOPIC, sendRadioFiles } from "./radioFiles";
 import { loadRadio } from "./radio";
 
 export type Quality = "excellent" | "good" | "poor" | "lost" | "unknown";
@@ -383,13 +383,15 @@ function wire(r: Room) {
   r.registerByteStreamHandler(RADIO_TOPIC, (reader) => void onRadioStream(reader));
   r.on(RoomEvent.ParticipantConnected, (p) => {
     diag("voice", "someone joined", { who: p.identity });
-    void sendRadioFiles(p.identity);
     playSound("join");
     bump();
     watchAlone();
   })
+    // Radio files go to a newcomer once their connection takes data (on "connected" it may not yet).
+    .on(RoomEvent.ParticipantActive, (p) => void sendRadioFiles(p.identity))
     .on(RoomEvent.ParticipantDisconnected, (p) => {
       diag("voice", "someone left", { who: p.identity });
+      forgetParticipant(p.identity);
       playSound("leave");
       const s = { ...V().speaking };
       delete s[p.identity];
@@ -472,10 +474,11 @@ function wire(r: Room) {
     .on(RoomEvent.ActiveDeviceChanged, (kind, id) => diag("device", "active device", { kind, id }))
     .on(RoomEvent.DataReceived, (payload, p) => {
       try {
-        const msg = JSON.parse(new TextDecoder().decode(payload)) as { t: string; e?: string } & Partial<ClipMessage>;
+        const msg = JSON.parse(new TextDecoder().decode(payload)) as { t: string; e?: string; itemId?: unknown } & Partial<ClipMessage>;
         if (msg.t === "emoji" && msg.e && p) addReaction(p.identity, msg.e);
         else if (msg.t === "clip" && p) receiveClip(p, msg as ClipMessage);
         else if (msg.t === "clip-stop" && p && typeof msg.n === "number") void clips().then((m) => m.stopRemoteClips(p.identity, msg.n));
+        else if (msg.t === "radio-need" && p && typeof msg.itemId === "string") onRadioNeed(p.identity, msg.itemId);
       } catch {
         /* not ours */
       }

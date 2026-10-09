@@ -4,6 +4,7 @@
 import { settings, useSettings } from "../../store/settings";
 import { myFile, serverNow, useRadio } from "./radio";
 import { radioFileUrl, useRadioFiles } from "./radioFiles";
+import { shouldPlay, shouldSeek, sourceStep } from "./radioSync";
 import { useVoice } from "./voice";
 
 const el = new Audio();
@@ -13,6 +14,8 @@ el.dataset.radioPlayer = "";
 el.style.display = "none";
 document.body.appendChild(el);
 let srcFor: string | null = null;
+/** The track the first seek was made for (later ones wait for data, so a slow link isn't sought over and over). */
+let seekedFor: string | null = null;
 let ownUrl: string | null = null;
 
 function sourceFor(itemId: string, kind: "file" | "link", url: string | null): string | undefined {
@@ -37,28 +40,34 @@ function sync() {
   el.volume = v.deafened ? 0 : Math.max(0, Math.min(1, ((s.radioVolume ?? 60) / 100) * Math.min(1, (s.outputVolume ?? 100) / 100)));
   const sink = el as HTMLAudioElement & { setSinkId?: (id: string) => Promise<void> };
   if (sink.setSinkId && s.outputDevice && (sink as { sinkId?: string }).sinkId !== s.outputDevice) void sink.setSinkId(s.outputDevice).catch(() => {});
-  if (!cur || !item) {
-    if (srcFor) {
-      el.pause();
-      el.removeAttribute("src");
-      el.load();
-      srcFor = null;
-      delete el.dataset.item;
-    }
-    return;
-  }
+  if (!cur || !item) return void (srcFor && unload());
   const src = sourceFor(item.id, item.kind, item.url);
-  if (!src) return; // the file is on its way
-  if (srcFor !== item.id) {
+  const step = sourceStep(srcFor, item.id, src);
+  // The next track's file hasn't come: the skipped one mustn't play on meanwhile.
+  if (step === "stop") return unload();
+  if (step === "wait") return; // the file is on its way
+  if (step === "switch") {
     srcFor = item.id;
+    seekedFor = null;
     el.dataset.item = item.id;
-    el.src = src;
+    el.src = src!;
   }
   const target = (cur.pausedAt ?? serverNow() - cur.startedAt) / 1000;
-  if (target >= item.duration) return void el.pause();
-  if (Math.abs(el.currentTime - target) > 0.3 && el.readyState >= 1) el.currentTime = target;
-  if (cur.pausedAt !== null) el.pause();
+  if (shouldSeek(el, target, seekedFor !== item.id)) {
+    el.currentTime = target;
+    seekedFor = item.id;
+  }
+  if (cur.pausedAt !== null || !shouldPlay(el, target, item.duration)) el.pause();
   else if (el.paused) void el.play().catch(() => {});
+}
+
+function unload() {
+  el.pause();
+  el.removeAttribute("src");
+  el.load();
+  srcFor = null;
+  seekedFor = null;
+  delete el.dataset.item;
 }
 
 el.addEventListener("loadedmetadata", sync);

@@ -2,13 +2,19 @@ import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { expect, test, type APIRequestContext, type Browser, type BrowserContext, type Page } from "@playwright/test";
 
-// Every window a test opens closes after it: left open, their calls kept running
-// through the rest of the suite, and the last tests ran beside dozens of them.
+// Every window a test opens is closed once the next test opens its first: left
+// open, their calls kept running through the rest of the suite, and the last
+// tests ran beside dozens of them. (A test.afterEach in this shared module would
+// attach only to the first spec file that loads it.)
 const opened = new Set<BrowserContext>();
-test.afterEach(async () => {
+let openedFor = "";
+async function closeOthers() {
+  const id = test.info().testId;
+  if (id === openedFor) return;
+  openedFor = id;
   await Promise.all([...opened].map((c) => c.close().catch(() => {})));
   opened.clear();
-});
+}
 
 export const BASE = process.env.E2E_URL ?? "http://localhost:5173";
 export const run = Date.now().toString(36).slice(-6);
@@ -93,6 +99,7 @@ export async function openAs(
     storage?: Record<string, string>;
   } = {}
 ): Promise<Session> {
+  await closeOthers();
   const context = await browser.newContext({
     baseURL: BASE,
     locale: "ru-RU",

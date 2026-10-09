@@ -1,5 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
-import { guildWith, noErrors, openAs, register } from "./helpers";
+import { BASE, guildWith, noErrors, openAs, register } from "./helpers";
 
 /** A 30 s tone as a WAV file (each test gets its own pitch). */
 function wav(seconds = 30, freq = 330, rate = 22_050): Buffer {
@@ -89,4 +89,42 @@ test("radio: a file plays for everyone in step, each at their own volume; a late
   await expect(panel.locator("[data-radio-item][data-current]")).toContainText("song");
   await expect.poll(async () => (await player(b.page)).paused, { timeout: 20_000 }).toBe(false);
   noErrors(a, b, c);
+});
+
+test("radio: a listener who rejoins hears it again; a skip to a file that never comes stops the old track; the sidebar knows after a reload", async ({ browser, request }) => {
+  const alice = await register(request, "Алиса");
+  const bob = await register(request, "Боб");
+  const dave = await register(request, "Дима");
+  const { guild, voice, text } = await guildWith(request, alice, [bob, dave]);
+  const a = await openAs(browser, alice, `/#/channels/${guild.id}/${voice.id}`);
+  const b = await openAs(browser, bob, `/#/channels/${guild.id}/${voice.id}`);
+  await a.page.getByRole("button", { name: "Зайти в канал" }).click();
+  await b.page.getByRole("button", { name: "Зайти в канал" }).click();
+  await expect(b.page.locator(`[data-user="${alice.id}"]`).first()).toBeVisible();
+  await a.page.getByRole("button", { name: "Радио" }).last().click();
+  const panel = a.page.locator("[data-radio]");
+  const [chooser] = await Promise.all([a.page.waitForEvent("filechooser"), panel.getByRole("button", { name: "Добавить файлы" }).click()]);
+  await chooser.setFiles({ name: "Длинная.wav", mimeType: "audio/wav", buffer: wav(60, 300) });
+  await expect.poll(async () => (await player(b.page)).paused, { timeout: 20_000 }).toBe(false);
+
+  // Bob leaves and comes back: the file comes to him again, he plays where everyone is.
+  await b.page.getByRole("button", { name: "Отключиться" }).first().click();
+  await expect.poll(async () => (await player(b.page)).itemId).toBeNull();
+  await b.page.getByRole("button", { name: "Зайти в канал" }).click();
+  await expect.poll(async () => (await player(b.page)).paused, { timeout: 25_000 }).toBe(false);
+  expect(Math.abs((await player(b.page)).time - (await player(a.page)).time)).toBeLessThan(0.6);
+
+  // Dave, not in the call, opens the app afresh: the sidebar shows what plays.
+  const d = await openAs(browser, dave, `/#/channels/${guild.id}/${text.id}`);
+  await expect(d.page.locator("[data-radio-now]")).toContainText("Длинная");
+
+  // Bob queues a "file" his app doesn't have (straight through the API): it can never arrive.
+  // Skipping to it, everyone stops the old track instead of playing on.
+  const res = await request.post(`${BASE}/api/channels/${voice.id}/radio/items`, { data: { kind: "file", title: "Призрак", duration: 30 }, headers: { authorization: `Bearer ${bob.access}` } });
+  expect(res.ok()).toBeTruthy();
+  await panel.getByRole("button", { name: "Следующий" }).click();
+  await expect(panel.locator("[data-radio-item][data-current]")).toContainText("Призрак");
+  await expect.poll(async () => (await player(b.page)).paused).toBe(true);
+  await expect.poll(async () => (await player(a.page)).paused).toBe(true);
+  noErrors(a, b, d);
 });

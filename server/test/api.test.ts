@@ -862,4 +862,23 @@ describe("radio", () => {
     await voice.onLeave(fan.id, ch);
     expect((await api<{ items: unknown[] }>("GET", `/api/channels/${ch}/radio`, dj.token)).body.items).toEqual([]);
   });
+
+  it("a server mute covers the radio: no adding, skipping or pausing", async () => {
+    const mod = await register("radiomod");
+    const loud = await register("radioloud");
+    const g = await api<GuildCreatePayload>("POST", "/api/guilds", mod.token, { name: "Тишина", template: "default", locale: "ru" });
+    const inv = await api<{ code: string }>("POST", `/api/guilds/${g.body.id}/invites`, mod.token, { maxAge: 0, maxUses: 0 });
+    await api("POST", `/api/invites/${inv.body.code}`, loud.token);
+    const ch = g.body.channels.find((c) => c.type === "voice")!.id;
+    const { voice } = await import("../src/state/voice");
+    await voice.onJoin(mod.id, ch, "sid-mod");
+    await voice.onJoin(loud.id, ch, "sid-loud");
+    const song = await api<{ id: string }>("POST", `/api/channels/${ch}/radio/items`, mod.token, { kind: "file", title: "Песня", duration: 100 });
+    expect((await api("PATCH", `/api/guilds/${g.body.id}/voice/${loud.id}`, mod.token, { mute: true })).status).toBe(200);
+    expect((await api("POST", `/api/channels/${ch}/radio/items`, loud.token, { kind: "file", title: "Громко", duration: 10 })).status).toBe(403);
+    expect((await api("POST", `/api/channels/${ch}/radio/skip`, loud.token, { itemId: song.body.id })).status).toBe(403);
+    expect((await api("POST", `/api/channels/${ch}/radio/pause`, loud.token)).status).toBe(403);
+    await voice.onLeave(loud.id, ch);
+    await voice.onLeave(mod.id, ch);
+  });
 });

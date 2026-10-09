@@ -15,6 +15,12 @@ function inCall(userId: string, channelId: string) {
   if (voice.get(userId)?.channelId !== channelId) throw forbidden("not_in_call");
 }
 
+/** Playing to the channel is speaking in it: a server mute or no "speak" covers the radio too. */
+function maySpeak(userId: string, channelId: string) {
+  inCall(userId, channelId);
+  if (!voice.rightsFor(userId, channelId).rights.mic) throw forbidden("muted");
+}
+
 export async function radioRoutes(app: FastifyInstance) {
   app.addHook("preHandler", authenticate);
 
@@ -25,7 +31,7 @@ export async function radioRoutes(app: FastifyInstance) {
   });
   app.post("/api/channels/:id/radio/items", async (req) => {
     const { id } = parse(params, req.params);
-    inCall(req.auth.userId, id);
+    maySpeak(req.auth.userId, id);
     const input = parse(radioItemCreateSchema, req.body);
     if (input.url && isMusicServiceLink(input.url)) throw badRequest("music_service_link");
     return radio.add(id, req.auth.userId, input);
@@ -47,14 +53,14 @@ export async function radioRoutes(app: FastifyInstance) {
   });
   app.post("/api/channels/:id/radio/skip", async (req) => {
     const { id } = parse(params, req.params);
-    inCall(req.auth.userId, id);
+    maySpeak(req.auth.userId, id);
     radio.skip(id, parse(radioSkipSchema, req.body).itemId);
     return radio.state(id);
   });
   for (const action of ["pause", "resume"] as const)
     app.post(`/api/channels/:id/radio/${action}`, async (req) => {
       const { id } = parse(params, req.params);
-      inCall(req.auth.userId, id);
+      maySpeak(req.auth.userId, id);
       radio[action](id);
       return radio.state(id);
     });
