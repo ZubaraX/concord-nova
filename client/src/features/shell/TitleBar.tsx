@@ -9,9 +9,9 @@ export function TitleBar() {
   const [max, setMax] = useState(() => window.nova?.window.isMaximized() ?? false);
   const conn = useConnection((s) => s.state);
   useEffect(() => window.nova?.window.onMaximizeChange(setMax), []);
-  const btn = "no-drag flex h-8 w-11 items-center justify-center text-fg-3 transition-colors hover:bg-raised hover:text-fg";
+  const btn = "no-drag flex h-[32px] w-11 items-center justify-center text-fg-3 transition-colors hover:bg-raised hover:text-fg";
   return (
-    <div className="drag-region relative z-50 flex h-8 shrink-0 items-center select-none">
+    <div className="drag-region relative z-50 flex h-[32px] shrink-0 items-center select-none">
       <div className="flex items-center gap-2 pl-3">
         <NovaStar size={14} />
         <span className="text-[12px] font-semibold text-fg-3">Concord Nova</span>

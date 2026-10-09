@@ -2,6 +2,45 @@
 import type { Dict } from "./ru";
 
 export const en: Dict = {
+  screen: {
+    preset: { low: "Economy", standard: "Standard", sharp: "Sharp text", games: "Games", gamesPlus: "Games+", ultra: "Ultra", extreme: "Extreme", custom: "Custom" },
+    presetHint: {
+      low: "A slow connection or a laptop: everything's visible, small text is soft.",
+      standard: "Desktop, browser, documents.",
+      sharp: "Code, spreadsheets, small fonts: always sharp, fewer frames.",
+      games: "Smooth, 60 frames: games and video.",
+      gamesPlus: "Smooth and sharp. Needs a good connection: 20 Mbit/s up or more.",
+      ultra: "The screen as it is, up to 4K. For a strong PC and fast connections all round.",
+      extreme: "Barely compressed. Needs a very fast connection, yours and your viewers'.",
+      custom: "Resolution, frames, bitrate, codec and what matters more — your choice.",
+    },
+    source: "Source",
+    fps: "fps",
+    mbps: "{n} Mbit/s",
+    kbps: "{n} kbit/s",
+    resolution: "Resolution",
+    framerate: "Frames per second",
+    bitrate: "Bitrate",
+    priority: "Prefer",
+    mode: { detail: "Sharpness", balanced: "Balance", motion: "Smoothness" },
+    codec: "Codec",
+    codecAuto: "Auto",
+    codecHint: {
+      h264: "H.264 — encoded by the graphics card: hardly loads the computer, the best for games.",
+      vp9: "VP9 — sharper at the same bitrate, but encoded by the processor: a heavy game may stutter.",
+      av1: "AV1 — the strongest compression, the best picture on a slow connection; the heaviest on the processor.",
+    },
+    liveHint: "Quality changes during a share too; the codec, from the next one.",
+    codecNext: "The codec changes from the next share",
+    info: "Stream details",
+    infoHint: "Resolution, frames, bitrate and codec over streams — and why quality is lowered (connection or processor).",
+    limit: { bandwidth: "limited by the connection", cpu: "limited by the processor", other: "limited" },
+  },
+  lightbox: {
+    zoomIn: "Zoom in",
+    zoomOut: "Zoom out",
+    actualSize: "Actual size (1:1) / fit to screen",
+  },
   common: {
     save: "Save",
     saved: "Saved",
@@ -240,6 +279,11 @@ export const en: Dict = {
     boost: "",
   },
   channel: {
+    notifications: "Notifications",
+    notifyAll: "All messages",
+    notifyMentions: "Only mentions",
+    notifyNone: "Nothing",
+    notifyDefault: "Like the server",
     text: "Text",
     voice: "Voice",
     category: "Category",
@@ -425,6 +469,8 @@ export const en: Dict = {
     inChannel: "in #{name}",
   },
   voice: {
+    callStarted: "{name} started a call: 🔊 {where}",
+    joinCall: "Join",
     connect: "Join",
     disconnect: "Disconnect",
     mute: "Mute",
@@ -567,6 +613,9 @@ export const en: Dict = {
     },
   },
   call: {
+    notifyTitle: "{name} is calling you",
+    notifyBody: "A private call — open Concord Nova to answer",
+    notifyGroup: "A call in “{name}”",
     incoming: "Incoming call",
     calling: "Calling…",
     accept: "Accept",

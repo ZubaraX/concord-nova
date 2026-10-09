@@ -7,6 +7,7 @@ import { api } from "../../lib/api";
 import { t } from "../../lib/i18n";
 import { loopSound } from "../../lib/sound";
 import { isDesktop } from "../../lib/platform";
+import { notifyIncomingCall } from "../../lib/notifications";
 import { channelTitle, useData } from "../../store/data";
 import { navigate } from "../../store/ui";
 import { UserAvatar } from "../../components/ui/avatar";
@@ -24,6 +25,12 @@ export function IncomingCall() {
   const others = useData((s) => (myCall ? Object.values(s.voiceStates).filter((v) => v.channelId === myCall && v.userId !== me).length : 0));
 
   const ringing = !!call && !inThatCall && status !== "dnd";
+
+  const ringingIn = ringing ? call.channelId : null;
+  useEffect(() => {
+    if (ringingIn && call?.initiatorId) notifyIncomingCall(ringingIn, call.initiatorId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- once per incoming call
+  }, [ringingIn]);
 
   useEffect(() => {
     if (!ringing) return;

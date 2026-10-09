@@ -22,6 +22,84 @@ import { buildEffect, type EffectGraph } from "./effects";
 type DeepCore = import("deepfilternet3-noise-filter").DeepFilterNet3Core;
 let deepCore: Promise<DeepCore> | null = null;
 
+// How the deep denoiser is tuned. Measured on Russian speech, clean, with fan
+// noise, with typing and with loud noise (until 1.7.5 it ran at 100 dB, alone):
+// - at 100 dB it removes everything it doesn't take for speech: in loud noise
+//   7 % of the speech was cut by over 20 dB — syllables gone. Limited to
+//   18–30 dB, that's 0–4 %; what noise stays under the voice is masked by it,
+//   and the gate closes the pauses.
+// - at any limit it turns quiet voiced speech down (word endings, soft
+//   syllables, often the first word): 16–27 % of the speech came out over
+//   6 dB weaker, against 0–1 % with RNNoise. The speech guard below gives back
+//   30 % of the original while someone speaks: 1–3 %. The pauses stay clean:
+//   a fan -43 → -66 dBFS, typing -49 → -68 dBFS (e2e/denoise.spec.ts).
+const DEEP_LIMIT_DB = 24;
+const GUARD_MIX = 0.3;
+/** How far the denoiser's output lags its input (samples at 48 kHz): its frames, lookahead and buffering. Checked by the e2e test. */
+export const DEEP_DELAY = 1952;
+
+// Speech guard: denoised + (while someone speaks) a share of the original,
+// delayed to line up with the denoised one. Speech is a level held over the
+// signal's own floor for a while — a keyboard click dies away sooner — in
+// either of them:
+// - the denoised one: 15 dB over its floor for 25 ms (but a word the model
+//   has eaten isn't there);
+// - the original: 20 dB over its floor for 40 ms. It arrives 40 ms before the
+//   denoised copy, so the guard is open by the time the word gets there —
+//   the first word too.
+const GUARD_CODE = `registerProcessor("nova-speech-guard", class extends AudioWorkletProcessor {
+  constructor(o) {
+    super();
+    const p = o.processorOptions;
+    this.k = p.mix; this.ring = new Float32Array(p.delay); this.pos = 0;
+    this.env = 0; this.floor = 0.001; this.wrun = 0; this.denv = 0; this.dfloor = 0.001; this.run = 0; this.hold = 0; this.mix = 0;
+  }
+  process(inputs, outputs) {
+    const wet = inputs[0][0], dry = inputs[1][0], out = outputs[0][0];
+    if (!out) return true;
+    const ring = this.ring, n = ring.length, k = this.k;
+    let { env, floor, wrun, denv, dfloor, run, hold, mix, pos } = this;
+    for (let i = 0; i < out.length; i++) {
+      const x = wet ? wet[i] : 0;
+      const y = dry ? dry[i] : 0;
+      const d = ring[pos]; ring[pos] = y; pos = pos + 1 === n ? 0 : pos + 1;
+      // Power over ~10 ms (steady noise barely moves it; peaks would). Floors fall quickly and rise
+      // 30 dB a second, never below -90 dBFS: a microphone that starts in digital silence mustn't
+      // leave them so low that its noise passes for speech. Speech is also over -50 dBFS.
+      env += (x * x - env) * 0.002;
+      floor = env < floor ? floor * 0.99 + env * 0.01 : floor * 1.000144;
+      if (floor < 1e-9) floor = 1e-9;
+      wrun = env > 1e-5 && env > floor * 32 ? wrun + 1 : 0;
+      denv += (y * y - denv) * 0.002;
+      dfloor = denv < dfloor ? dfloor * 0.99 + denv * 0.01 : dfloor * 1.000144;
+      if (dfloor < 1e-9) dfloor = 1e-9;
+      run = denv > 1e-5 && denv > dfloor * 100 ? run + 1 : 0;
+      if (run >= 1920) hold = 7200 + n;
+      else if (wrun >= 1200 && hold < 7200) hold = 7200;
+      else if (hold > 0) hold--;
+      const target = hold > 0 ? k : 0;
+      mix += (target - mix) * (target > mix ? 0.005 : 0.0005);
+      out[i] = x + mix * d;
+    }
+    Object.assign(this, { env, floor, wrun, denv, dfloor, run, hold, mix, pos });
+    return true;
+  }
+});`;
+let guardUrl: string | null = null;
+
+async function speechGuardNode(ctx: AudioContext): Promise<AudioWorkletNode> {
+  guardUrl ??= URL.createObjectURL(new Blob([GUARD_CODE], { type: "application/javascript" }));
+  await ctx.audioWorklet.addModule(guardUrl);
+  return new AudioWorkletNode(ctx, "nova-speech-guard", {
+    numberOfInputs: 2,
+    numberOfOutputs: 1,
+    outputChannelCount: [1],
+    channelCount: 1,
+    channelCountMode: "explicit",
+    processorOptions: { delay: DEEP_DELAY, mix: GUARD_MIX },
+  });
+}
+
 // The model's runtime asks for random bytes (hash-map seeds, nothing secret),
 // but an AudioWorklet has no `crypto` — without this it silently passes audio
 // through unprocessed. Loaded into the worklet scope before the model.
@@ -48,8 +126,7 @@ async function modelBytes(url: string): Promise<ArrayBuffer> {
 function loadDeepCore(): Promise<DeepCore> {
   deepCore ??= (async () => {
     const { DeepFilterNet3Core } = await import("deepfilternet3-noise-filter");
-    // 100 dB attenuation limit = remove the noise completely.
-    const core = new DeepFilterNet3Core({ sampleRate: 48_000, noiseReductionLevel: 100 });
+    const core = new DeepFilterNet3Core({ sampleRate: 48_000, noiseReductionLevel: DEEP_LIMIT_DB });
     // Load from the app's own files instead of the package's CDN.
     const base = new URL("./df3/", document.baseURI);
     const wasm = new URL("df_bg.wasm", base).href;
@@ -205,10 +282,13 @@ export class MicProcessor implements TrackProcessor<Track.Kind.Audio, AudioProce
     if (mode === "deep") {
       try {
         const df = await deepFilterNode(ctx);
+        const guard = await speechGuardNode(ctx);
         if (gen !== this.generation) return;
         head.connect(df);
-        head = df;
-        this.nodes.push(df);
+        df.connect(guard, 0, 0);
+        head.connect(guard, 0, 1); // the original, for the guard
+        head = guard;
+        this.nodes.push(df, guard);
         this.denoiser = "deep";
       } catch (e) {
         if (gen !== this.generation) return;

@@ -4,7 +4,7 @@ import { createContext, useCallback, useContext, useEffect, useLayoutEffect, use
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "motion/react";
 import clsx from "clsx";
-import { X } from "lucide-react";
+import { ChevronRight, X } from "lucide-react";
 import { t } from "../../lib/i18n";
 
 // ── Modal ────────────────────────────────────────────────────────────────────
@@ -232,7 +232,14 @@ function tidy(items: MenuEntry[]): MenuItem[] {
 }
 
 export function MenuList({ items, onClose, className }: { items: MenuEntry[]; onClose: () => void; className?: string }) {
-  const list = tidy(items);
+  // A submenu opens in place, under its entry (works the same with a mouse and a finger).
+  const [expanded, setExpanded] = useState<number | null>(null);
+  const top = tidy(items);
+  const list: (MenuItem & { sub?: boolean; parent?: number })[] = [];
+  top.forEach((it, i) => {
+    list.push({ ...it, parent: it.submenu ? i : undefined });
+    if (it.submenu && expanded === i) for (const s of it.submenu) list.push({ ...s, sub: true });
+  });
   const refs = useRef<(HTMLButtonElement | null)[]>([]);
   const onKey = (e: React.KeyboardEvent) => {
     const enabled = refs.current.filter((b): b is HTMLButtonElement => !!b && !b.disabled);
@@ -257,18 +264,23 @@ export function MenuList({ items, onClose, className }: { items: MenuEntry[]; on
               refs.current[i] = el;
             }}
             role="menuitem"
+            data-checked={it.checked}
+            aria-expanded={it.parent !== undefined ? expanded === it.parent : undefined}
             disabled={it.disabled}
             onClick={() => {
+              if (it.parent !== undefined) return setExpanded((e) => (e === it.parent ? null : it.parent!));
               it.onSelect?.();
               if (!it.keepOpen) onClose();
             }}
             className={clsx(
               "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-[14px] font-medium outline-none transition-colors disabled:opacity-40",
+              it.sub && "pl-9 text-[13.5px]",
               it.danger ? "text-bad hover:bg-bad hover:text-white focus:bg-bad focus:text-white" : "text-fg-2 hover:bg-star/90 hover:text-on-star focus:bg-star/90 focus:text-on-star"
             )}
           >
             {it.icon && <span className="flex w-4 shrink-0 justify-center opacity-90">{it.icon}</span>}
             <span className="min-w-0 flex-1 truncate">{it.label}</span>
+            {it.parent !== undefined && <ChevronRight size={15} className={clsx("shrink-0 opacity-60 transition-transform", expanded === it.parent && "rotate-90")} />}
             {it.checked !== undefined && (
               <span className={clsx("h-4 w-4 rounded-full border-2", it.checked ? "border-current bg-current" : "border-current opacity-50")} />
             )}

@@ -7,7 +7,7 @@ import { prisma } from "../db";
 import { cache } from "./cache";
 import { toChannel, toUser, toUsers } from "../gateway/io";
 import * as lk from "../voice/livekit";
-import { pushToUser } from "../services/push";
+import { pushForVoiceStart, pushToUser } from "../services/push";
 import { createMessage } from "../services/messages";
 import { loadMessage } from "../services/serialize";
 
@@ -136,6 +136,7 @@ class VoiceManager {
     this.states.set(userId, state);
     this.emit(this.dto(state), channelId);
     if (!guildId) await this.callJoin(userId, channelId);
+    else if (this.countInChannel(channelId) === 1) void pushForVoiceStart(guildId, channelId, userId).catch(() => {});
   }
 
   async onLeave(userId: string, channelId: string, sid?: string) {

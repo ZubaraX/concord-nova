@@ -479,6 +479,8 @@ export async function playClip(id: string, localOnly = false) {
   };
   const sent = inCall && sendClip({ id, url, g: gain, n });
   const local = playBuffer(buffer, gain * (sent ? MONITOR : 1), finish);
+  // If the audio engine never says it ended (paused while the app was busy or hidden), it still frees its place.
+  setTimeout(finish, buffer.duration * 1000 + 500);
   const stop = () => {
     if (sent) sendClipStop(n);
     local();
@@ -498,10 +500,21 @@ export function stopClips() {
 const SAFE_URL = /^\/files\/[\w\-./%]+$/;
 /** All at once, from everyone together. */
 const MAX_HEARD = 8;
-/** Arriving later than this (a slow download), it's skipped rather than played out of time. */
-const MAX_LATE_MS = 3000;
+/** A slow first download doesn't lose the sound: it plays from where the sender is by now (under this, from the start). */
+const LATE_OK_MS = 400;
 
 const heard = new Map<string, { from: string; stop: () => void }>();
+
+/** Gets this server's sounds (and your own) ready, so the first time someone plays one it isn't late. */
+export function prefetchSounds(guildId: string | null) {
+  const wanted = useExpressions.getState().sounds.filter((s) => s.guildId === guildId || s.guildId === null).slice(0, 24);
+  let i = 0;
+  const next = () => {
+    const s = wanted[i++];
+    if (s) void loadBuffer(s.id, s.url).finally(next);
+  };
+  next();
+}
 
 /** Someone in the call played a sound; `gain` is how loud you set them (their soundboard, and everyone's). */
 export function playRemoteClip(from: string, msg: ClipMessage, gain: number) {
@@ -527,10 +540,13 @@ export function playRemoteClip(from: string, msg: ClipMessage, gain: number) {
   bumpHeard(from, 1);
   void loadBuffer(msg.id, url).then((b) => {
     if (stopped) return;
-    if (!b || Date.now() - at > MAX_LATE_MS) return done();
+    const late = Date.now() - at;
+    const offset = late > LATE_OK_MS ? late / 1000 : 0;
+    if (!b || offset >= b.duration - 0.15) return done();
     const g = Math.min(1, Math.max(0, Number(msg.g) || 0)) * gain;
     useSoundboard.setState({ lastHeard: { from, id: msg.id, gain: g } });
-    stopLocal = playBuffer(b, g, done);
+    stopLocal = playBuffer(b, g, done, offset);
+    setTimeout(done, (b.duration - offset) * 1000 + 500);
   });
 }
 

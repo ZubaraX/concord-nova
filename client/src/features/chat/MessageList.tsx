@@ -99,6 +99,22 @@ export function MessageList({ channelId }: { channelId: string }) {
   const reactPicker = useUI((s) => (s.reactPicker?.m.channelId === channelId ? s.reactPicker : null));
   const virt = useRef<VirtuosoHandle>(null);
   const [atBottom, setAtBottom] = useState(true);
+  // Pinned to the end until the reader scrolls up: pictures and link previews
+  // that finish loading below grow the list, and it follows them down.
+  const pinned = useRef(true);
+  const pinUntil = useRef(0);
+  /** When the reader last scrolled by hand (wheel, touch, keys): only that unpins. */
+  const handScroll = useRef(0);
+  const byHand = () => (handScroll.current = performance.now());
+  /** To the very end — at once, then again while what's there settles (an animated scroll aims at a moving target, jerks and stops short). */
+  const toBottom = useCallback(() => {
+    pinned.current = true;
+    pinUntil.current = performance.now() + 1500;
+    const go = () => virt.current?.scrollToIndex({ index: "LAST", align: "end", behavior: "auto" });
+    go();
+    requestAnimationFrame(() => requestAnimationFrame(go));
+    setTimeout(go, 200);
+  }, []);
   const [highlight, setHighlight] = useState<string | null>(null);
   const [firstIndex, setFirstIndex] = useState(START_INDEX);
   const prevFirst = useRef<string | null>(null);
@@ -128,11 +144,11 @@ export function MessageList({ channelId }: { channelId: string }) {
     // My own new message: always bring it into view.
     const last = items[items.length - 1];
     if (items.length > prevLen.current && last?.m.author.id === me && last.m.id.startsWith(PENDING_PREFIX)) {
-      requestAnimationFrame(() => virt.current?.scrollToIndex({ index: items.length - 1, align: "end", behavior: "auto" }));
+      toBottom();
     }
     prevFirst.current = first;
     prevLen.current = items.length;
-  }, [items, me]);
+  }, [items, me, toBottom]);
 
   // Jump to a specific message (reply click, search, pins, links).
   useEffect(() => {
@@ -171,6 +187,8 @@ export function MessageList({ channelId }: { channelId: string }) {
 
   const initialIndex = useMemo(() => {
     const u = items.findIndex((i) => i.unread);
+    // Opened at the first unread message: not pinned to the end until the reader gets there.
+    pinned.current = u <= 0;
     return u > 0 ? { index: u, align: "center" as const } : { index: Math.max(0, items.length - 1), align: "end" as const };
     // Only for the first render of this channel.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -209,7 +227,7 @@ export function MessageList({ channelId }: { channelId: string }) {
   return (
     // A size container: pictures in messages measure themselves against the
     // chat (cqw/cqh), not the window — the chat beside a call is narrow and short.
-    <div className="relative flex min-h-0 flex-1 flex-col [container-type:size]">
+    <div className="relative flex min-h-0 flex-1 flex-col [container-type:size]" onWheel={byHand} onTouchMove={byHand} onKeyDown={byHand} onPointerDown={byHand}>
       {firstUnread && !marked && unreadCount > 0 && dividerAfter.current !== undefined && !atBottom && (
         <div className="absolute inset-x-4 top-2 z-10 flex items-center rounded-xl bg-bad/90 px-3 py-1.5 text-[13px] font-semibold text-white shadow-lift anim-pop">
           <button className="flex-1 text-left" onClick={() => virt.current?.scrollToIndex({ index: unreadIdx, align: "center" })}>
@@ -227,11 +245,18 @@ export function MessageList({ channelId }: { channelId: string }) {
         firstItemIndex={firstIndex}
         initialTopMostItemIndex={initialIndex}
         alignToBottom
-        followOutput={(bottom) => (bottom ? "smooth" : false)}
+        followOutput={(bottom) => (bottom || pinned.current ? "auto" : false)}
         atBottomThreshold={80}
         atBottomStateChange={(b) => {
+          // Leaving the bottom by hand unpins; the list growing under the reader (a picture loading) doesn't.
+          const now = performance.now();
+          if (b) pinned.current = true;
+          else if (now > pinUntil.current && now - handScroll.current < 1500) pinned.current = false;
           setAtBottom(b);
           if (b) maybeAck();
+        }}
+        totalListHeightChanged={() => {
+          if (pinned.current && !log.hasAfter) virt.current?.scrollToIndex({ index: "LAST", align: "end", behavior: "auto" });
         }}
         startReached={() => {
           if (log.hasBefore) void loadBefore(channelId);
@@ -239,7 +264,8 @@ export function MessageList({ channelId }: { channelId: string }) {
         endReached={() => {
           if (log.hasAfter) void loadAfter(channelId);
         }}
-        increaseViewportBy={{ top: 800, bottom: 400 }}
+        // Rendered (and measured) well ahead, so rows don't change size on screen while scrolling.
+        increaseViewportBy={{ top: 1200, bottom: 1200 }}
         // Keyed by nonce when present, so the optimistic row turns into the real one without remounting.
         computeItemKey={(_, it) => (it.m.nonce ? `n${it.m.nonce}` : it.m.id)}
         itemContent={(_, it) => <Row item={it} me={me} highlight={highlight === it.m.id} />}
@@ -256,8 +282,8 @@ export function MessageList({ channelId }: { channelId: string }) {
       {(!atBottom || log.hasAfter) && (
         <button
           onClick={() => {
-            if (log.hasAfter) void jumpToPresent(channelId);
-            else virt.current?.scrollToIndex({ index: items.length - 1, align: "end", behavior: "smooth" });
+            if (log.hasAfter) void jumpToPresent(channelId).then(toBottom);
+            else toBottom();
           }}
           className="glass absolute bottom-3 right-5 z-10 flex items-center gap-1.5 rounded-full px-3.5 py-2 text-[13px] font-semibold text-fg shadow-lift anim-pop hover:text-star"
         >

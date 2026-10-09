@@ -44,6 +44,27 @@ export function setMute(targetId: string, muted: boolean) {
   return run(api("/api/users/@me/notification-settings", { method: "PUT", body: { targetId, muted, muteUntil: null } }));
 }
 
+/** "Notifications ›": every message, mentions only, or nothing — for a server, or a channel (which can also follow its server). */
+function levelMenu(targetId: string, isChannel: boolean): MenuEntry {
+  const current = data().notif[targetId]?.level ?? "default";
+  const set = (level: "default" | "all" | "mentions" | "none") => void run(api("/api/users/@me/notification-settings", { method: "PUT", body: { targetId, level } }));
+  const item = (level: "default" | "all" | "mentions" | "none", label: string) => ({
+    label,
+    checked: current === level || (!isChannel && level === "all" && current === "default"),
+    onSelect: () => set(level),
+  });
+  return {
+    label: t("channel.notifications"),
+    icon: <Bell size={16} />,
+    submenu: [
+      ...(isChannel ? [item("default", t("channel.notifyDefault"))] : []),
+      item("all", t("channel.notifyAll")),
+      item("mentions", t("channel.notifyMentions")),
+      item("none", t("channel.notifyNone")),
+    ],
+  };
+}
+
 /**
  * Server actions. `header` is the dropdown under the server name (creation
  * first, like Discord); otherwise the right-click menu of the server icon.
@@ -66,8 +87,8 @@ export function guildMenu(guildId: string, opts: { header?: boolean } = {}): Men
   const createCategory: MenuEntry = channels && { label: t("guild.createCategory"), icon: <FolderPlus size={16} />, onSelect: () => ui().setModal({ kind: "createChannel", guildId, type: "category" }) };
   const copyId: MenuEntry = settings().developerMode && { label: t("chat.menu.copyId"), icon: <Copy size={16} />, onSelect: () => copy(guildId) };
   const head: MenuEntry[] = opts.header
-    ? [invite, settingsItem, createChannel, createCategory, { separator: true }, mute, markRead, copyId]
-    : [markRead, { separator: true }, invite, mute, settingsItem, createChannel, copyId];
+    ? [invite, settingsItem, createChannel, createCategory, { separator: true }, levelMenu(guildId, false), mute, markRead, copyId]
+    : [markRead, { separator: true }, invite, levelMenu(guildId, false), mute, settingsItem, createChannel, copyId];
   return [
     ...head,
     !owner && { separator: true },
@@ -101,6 +122,7 @@ export function channelMenu(channelId: string): MenuEntry[] {
   return [
     c.type !== "voice" && c.type !== "category" && { label: t("guild.markRead"), icon: <Check size={16} />, onSelect: () => void run(api(`/api/channels/${channelId}/ack`, { method: "POST", body: {} })) },
     c.type === "voice" && { label: t("voice.joinChannel"), icon: <Volume2 size={16} />, onSelect: () => void joinVoice(channelId) },
+    c.guildId && c.type !== "category" && levelMenu(channelId, true),
     { label: muted ? t("channel.unmute") : t("channel.mute"), icon: muted ? <Bell size={16} /> : <BellOff size={16} />, onSelect: () => void setMute(channelId, !muted) },
     c.guildId && can(bits, Permission.CREATE_INSTANT_INVITE) && c.type !== "category" && { label: t("common.invite"), icon: <UserPlus size={16} />, onSelect: () => ui().setModal({ kind: "invite", guildId: c.guildId!, channelId }) },
     { label: t("channel.copyLink"), icon: <Copy size={16} />, onSelect: () => copy(link) },

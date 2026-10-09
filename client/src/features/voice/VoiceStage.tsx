@@ -23,6 +23,7 @@ import {
   PictureInPicture2,
   Settings2,
   Eye,
+  Info,
   EyeOff,
   AudioLines,
 } from "lucide-react";
@@ -40,6 +41,9 @@ import { toggleLocalMute, userMenu } from "../shell/menus";
 import { PingButton } from "./ConnectionStats";
 import { SoundboardButton } from "./Soundboard";
 import { useSoundboard } from "./clips";
+import { useStreamStats } from "./streamStats";
+import { fmtBitrate, presetSpecs } from "./ScreenQualityPicker";
+import { SCREEN_PRESETS, SCREEN_PRESET_IDS, normalizeScreenQuality, resolveScreenPreset } from "./screenQuality";
 import { flipCamera, isLocal, joinVoice, leaveVoice, sendReaction, toggleCamera, toggleDeafen, toggleMute, toggleScreen, trackFor, useVoice, watchStream } from "./voice";
 
 /** Stream sound on/off for one person — the picture keeps playing. */
@@ -59,6 +63,9 @@ function TrackVideo({ track, mirror, contain }: { track: Track; mirror?: boolean
     if (!el) return;
     track.attach(el);
     return () => {
+      // The stream ended (or this tile went away) while it was in picture-in-picture:
+      // close that window too, or it stays behind as a black square.
+      if (document.pictureInPictureElement === el) void document.exitPictureInPicture().catch(() => {});
       track.detach(el);
     };
   }, [track]);
@@ -90,6 +97,7 @@ const Tile = memo(function Tile({ spec, focused, small, onFocus, guildId }: { sp
   const autoWatch = useSettings((s) => s.autoWatchStreams);
   const watched = useVoice((s) => !!s.watching[spec.userId]) || autoWatch;
   const streamMuted = useSettings((s) => !!s.streamMutes[spec.userId]);
+  const streamInfo = useSettings((s) => s.streamInfo);
   const soundboard = useSoundboard((s) => (me ? Object.keys(s.playing).length > 0 : !!s.heard[spec.userId]));
   // Somebody else's stream you haven't opened: nothing is downloaded until "Watch".
   const offer = spec.source === "screen" && !me && !watched;
@@ -169,6 +177,7 @@ const Tile = memo(function Tile({ spec, focused, small, onFocus, guildId }: { sp
       {quality === "poor" || quality === "lost" ? (
         <span className="absolute right-2 top-2 rounded-md bg-warn/90 px-1.5 text-[10.5px] font-bold leading-5 text-[#1a1200]">{quality === "lost" ? "!" : "⚠"}</span>
       ) : null}
+      {spec.source === "screen" && track && !small && <StreamInfo userId={spec.userId} />}
       {!small && track && (
         // Always visible on touch screens, where there is no hover.
         <div className="absolute right-2 top-2 flex gap-1 opacity-0 transition-opacity group-hover:opacity-100 [@media(hover:none)]:opacity-100">
@@ -200,6 +209,20 @@ const Tile = memo(function Tile({ spec, focused, small, onFocus, guildId }: { sp
                 </button>
               )}
             </>
+          )}
+          {spec.source === "screen" && (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                settings().setLocal({ streamInfo: !settings().streamInfo });
+              }}
+              className={clsx("rounded-lg bg-canvas/75 p-1.5 hover:text-fg", streamInfo ? "text-star" : "text-fg-2")}
+              aria-label={t("screen.info")}
+              aria-pressed={streamInfo}
+              title={t("screen.info")}
+            >
+              <Info size={15} />
+            </button>
           )}
           {document.fullscreenEnabled && (
             <button
@@ -489,9 +512,10 @@ function Controls({
       <Popover anchor={share.anchor} onClose={share.close} placement="top">
         <MenuList
           onClose={share.close}
-          items={(["720p30", "1080p30", "1080p60", "1440p60", "source"] as const).map((q) => ({
-            label: q === "source" ? `${t("voice.qualitySource")} · 60 fps` : q.replace("p", "p · ") + " fps",
-            checked: quality === q,
+          items={[...SCREEN_PRESET_IDS, "custom" as const].map((q) => ({
+            label: t(`screen.preset.${q}`),
+            hint: presetSpecs(q === "custom" ? resolveScreenPreset("custom", settings().screenCustom, "auto") : { ...SCREEN_PRESETS[q], codec: resolveScreenPreset(q, undefined, settings().screenCodec).codec }).replace(/ · [^·]+$/, ""),
+            checked: normalizeScreenQuality(quality) === q,
             onSelect: () => settings().setLocal({ screenQuality: q }),
           }))}
         />
@@ -540,6 +564,24 @@ export function UserVolume({ userId }: { userId: string }) {
       )}
       <div className="text-[13px] font-semibold text-fg-2">{t("voice.soundboardVolume")}</div>
       <Slider value={bvol} min={0} max={200} onChange={(v) => settings().setLocal({ soundboardVolumes: { ...settings().soundboardVolumes, [userId]: v } })} format={(v) => `${v}%`} />
+    </div>
+  );
+}
+
+/** What a stream really carries (when "Stream details" is on): size, frames, bitrate, codec — and what holds it back. */
+function StreamInfo({ userId }: { userId: string }) {
+  const on = useSettings((s) => s.streamInfo);
+  const st = useStreamStats(userId, on);
+  if (!on || !st) return null;
+  const limited = st.limit && st.limit !== "none";
+  return (
+    <div className="pointer-events-none absolute left-3 top-9 rounded-lg bg-canvas/80 px-2 py-1 text-[11.5px] font-semibold tabular-nums leading-5 text-fg-2 backdrop-blur" data-stream-info>
+      <div>
+        {st.width}×{st.height} · {st.fps} {t("screen.fps")} · {fmtBitrate(st.bitrate)}
+        {st.codec && ` · ${st.codec.toUpperCase()}`}
+      </div>
+      {limited && <div className="text-warn">{t(`screen.limit.${st.limit as "bandwidth" | "cpu" | "other"}`)}</div>}
+      {st.impl && <div className="max-w-[260px] truncate text-[10.5px] font-medium text-fg-3">{st.impl}</div>}
     </div>
   );
 }

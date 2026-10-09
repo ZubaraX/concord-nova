@@ -293,7 +293,7 @@ export async function decodeAudio(file: Blob): Promise<AudioBuffer | null> {
 }
 
 /** Plays a decoded sound on this device (soundboard, previews). Returns a stop function; `onEnd` runs either way. */
-export function playBuffer(buffer: AudioBuffer, gain = 1, onEnd?: () => void): () => void {
+export function playBuffer(buffer: AudioBuffer, gain = 1, onEnd?: () => void, offset = 0): () => void {
   const c = ac();
   if (!c || !master) {
     onEnd?.();
@@ -308,7 +308,7 @@ export function playBuffer(buffer: AudioBuffer, gain = 1, onEnd?: () => void): (
     g.disconnect();
     onEnd?.();
   };
-  src.start();
+  src.start(0, offset);
   return () => {
     try {
       src.stop();

@@ -6,7 +6,7 @@ import { Monitor, AppWindow } from "lucide-react";
 import { t } from "../../lib/i18n";
 import { Modal, ModalFooter, ModalHeader } from "../../components/ui/overlay";
 import { Button, Segmented, Switch } from "../../components/ui/primitives";
-import { settings, useSettings } from "../../store/settings";
+import { ScreenQualityPicker } from "../voice/ScreenQualityPicker";
 
 interface Source {
   id: string;
@@ -21,7 +21,6 @@ export function ScreenPickerModal({ resolve, onClose }: { resolve: (r: { id: str
   const [tab, setTab] = useState<"screens" | "windows">("screens");
   const [picked, setPicked] = useState<string | null>(null);
   const [audio, setAudio] = useState(true);
-  const quality = useSettings((s) => s.screenQuality);
 
   useEffect(() => {
     void window.nova?.getSources().then((list) => {
@@ -49,7 +48,7 @@ export function ScreenPickerModal({ resolve, onClose }: { resolve: (r: { id: str
           ]}
         />
       </div>
-      <div className="scroll-thin grid max-h-[50vh] grid-cols-2 gap-3 overflow-y-auto p-6 sm:grid-cols-3">
+      <div className="scroll-thin grid max-h-[38vh] grid-cols-2 gap-3 overflow-y-auto p-6 sm:grid-cols-3">
         {!sources && Array.from({ length: 6 }).map((_, i) => <div key={i} className="skeleton aspect-video rounded-xl" />)}
         {list.map((s) => (
           <button key={s.id} onClick={() => setPicked(s.id)} onDoubleClick={() => finish({ id: s.id, audio })} className={clsx("flex flex-col gap-2 rounded-xl p-2 text-left ring-2 transition-colors", picked === s.id ? "bg-star/10 ring-star" : "ring-transparent hover:bg-raised")}>
@@ -61,18 +60,15 @@ export function ScreenPickerModal({ resolve, onClose }: { resolve: (r: { id: str
           </button>
         ))}
       </div>
+      <div className="scroll-thin max-h-[30vh] overflow-y-auto px-6 pb-2">
+        <div className="mb-1.5 text-[12.5px] font-semibold text-fg-3">{t("settings.screenQuality")}</div>
+        <ScreenQualityPicker compact />
+      </div>
       <ModalFooter className="justify-between">
         <div className="flex items-center gap-5">
           <label className="flex items-center gap-2 text-[14px] font-medium">
             <Switch checked={audio} onChange={setAudio} /> {t("voice.shareAudio")}
           </label>
-          <select value={quality} onChange={(e) => settings().setLocal({ screenQuality: e.target.value as typeof quality })} className="h-9 rounded-lg bg-canvas px-2 text-[13px] outline-none ring-1 ring-line/10">
-            <option value="720p30">720p · 30</option>
-            <option value="1080p30">1080p · 30</option>
-            <option value="1080p60">1080p · 60</option>
-            <option value="1440p60">1440p · 60</option>
-            <option value="source">{t("voice.qualitySource")} · 60</option>
-          </select>
         </div>
         <div className="flex gap-2">
           <Button variant="ghost" onClick={() => finish(null)}>

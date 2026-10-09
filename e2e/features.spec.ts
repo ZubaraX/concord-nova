@@ -259,3 +259,43 @@ test("streams open only on request and each one's sound can be muted; soundboard
   expect(Object.keys(await fromAlice())).not.toContain("soundboard");
   noErrors(a, b);
 });
+
+test("screen share quality: a preset sets the encoder, changes apply while sharing, the viewer sees what arrives", async ({ browser, request }) => {
+  test.skip(!!process.env.E2E_URL, "imports modules through the dev server");
+  const alice = await register(request, "Алиса");
+  const bob = await register(request, "Боб");
+  const { guild, voice } = await guildWith(request, alice, [bob]);
+  const a = await openAs(browser, alice, `/#/channels/${guild.id}/${voice.id}`, { local: { screenQuality: "games" } });
+  const b = await openAs(browser, bob, `/#/channels/${guild.id}/${voice.id}`, { local: { autoWatchStreams: true, streamInfo: true } });
+  await a.page.getByRole("button", { name: "Зайти в канал" }).click();
+  await b.page.getByRole("button", { name: "Зайти в канал" }).click();
+  await expect(b.page.locator(`[data-user="${alice.id}"]`).first()).toBeVisible();
+
+  /** The encoder's own limits for Alice's share. */
+  const encoding = () =>
+    a.page.evaluate(async () => {
+      const url = performance.getEntriesByType("resource").map((e) => e.name).find((n) => n.includes("/src/features/voice/voice.ts")) ?? "/src/features/voice/voice.ts";
+      const m = (await import(/* @vite-ignore */ url)) as { getRoom: () => import("livekit-client").Room | null };
+      const pub = m.getRoom()?.localParticipant.getTrackPublication("screen_share" as never);
+      const sender = (pub?.track as { sender?: RTCRtpSender } | undefined)?.sender;
+      const e = sender?.getParameters().encodings?.[0];
+      return e ? { bitrate: e.maxBitrate, fps: e.maxFramerate } : null;
+    });
+
+  await a.page.getByRole("button", { name: "Показать экран" }).first().click();
+  await expect.poll(encoding, { timeout: 20_000 }).toEqual({ bitrate: 10_000_000, fps: 60 });
+
+  // Bob watches, with the details on: real numbers arrive.
+  const info = b.page.locator(`[data-user="${alice.id}"][data-source="screen"] [data-stream-info]`);
+  await expect(info).toBeVisible({ timeout: 20_000 });
+  await expect(info).toContainText(/\d+×\d+ · \d+ к\/с · [\d.]+ (Мбит|кбит)\/с/);
+
+  // A stronger preset while sharing: the encoder follows at once, no restart.
+  await a.page.evaluate(async () => {
+    const url = performance.getEntriesByType("resource").map((e) => e.name).find((n) => n.includes("/src/store/settings.ts")) ?? "/src/store/settings.ts";
+    const m = (await import(/* @vite-ignore */ url)) as { settings: () => { setLocal: (p: object) => void } };
+    m.settings().setLocal({ screenQuality: "extreme" });
+  });
+  await expect.poll(encoding).toEqual({ bitrate: 40_000_000, fps: 60 });
+  noErrors(a, b);
+});

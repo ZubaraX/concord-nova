@@ -37,6 +37,7 @@ import { settings, useSettings } from "../../store/settings";
 import { MicProcessor } from "./processor";
 import { appAudioTrack, stopAppAudio } from "./appAudio";
 import { useExpressions } from "./expressions";
+import { captureSize, resolveScreenPreset, type ScreenCodec, type ScreenPreset } from "./screenQuality";
 
 export type Quality = "excellent" | "good" | "poor" | "lost" | "unknown";
 
@@ -590,6 +591,9 @@ export async function joinVoice(channelId: string, isRejoin = false) {
   reportSelf();
   bump();
   watchAlone();
+  // The soundboard's files, once the call has settled (decoding them while joining would crackle).
+  const guildId = data().channels[channelId]?.guildId ?? null;
+  setTimeout(() => void clips().then((m) => m.prefetchSounds(guildId)), 5000);
 }
 
 export async function leaveVoice(silent = false) {
@@ -660,13 +664,41 @@ export async function flipCamera() {
   bump();
 }
 
-const SCREEN_PRESETS = {
-  "720p30": { w: 1280, h: 720, fps: 30, bitrate: 2_500_000 },
-  "1080p30": { w: 1920, h: 1080, fps: 30, bitrate: 4_500_000 },
-  "1080p60": { w: 1920, h: 1080, fps: 60, bitrate: 7_500_000 },
-  "1440p60": { w: 2560, h: 1440, fps: 60, bitrate: 12_000_000 },
-  source: { w: 0, h: 0, fps: 60, bitrate: 16_000_000 },
-} as const;
+// ── screen share quality (presets: ./screenQuality) ─────────────────────────
+const screenPreset = (): ScreenPreset => {
+  const s = settings();
+  return resolveScreenPreset(s.screenQuality, s.screenCustom, s.screenCodec);
+};
+/** What the encoder gives up first when the connection or the computer can't keep up. */
+const DEGRADE = { detail: "maintain-resolution", balanced: "balanced", motion: "maintain-framerate" } as const;
+const contentHint = (p: ScreenPreset) => (p.mode === "detail" || (p.mode === "balanced" && p.fps <= 30) ? "detail" : "motion");
+/** The codec the running share went out with (a change applies from the next one). */
+let sharedCodec: ScreenCodec | null = null;
+
+/** A new quality while sharing: bitrate, frame rate, size and priority change at once, without restarting. */
+async function applyScreenQuality() {
+  const pub = room?.localParticipant.getTrackPublication(Track.Source.ScreenShare);
+  const track = pub?.track as import("livekit-client").LocalVideoTrack | undefined;
+  const sender = track?.sender;
+  if (!track || !sender) return;
+  const p = screenPreset();
+  const params = sender.getParameters() as RTCRtpSendParameters & { degradationPreference?: string };
+  for (const e of params.encodings ?? []) {
+    e.maxBitrate = p.bitrate;
+    e.maxFramerate = p.fps;
+  }
+  params.degradationPreference = DEGRADE[p.mode];
+  await sender.setParameters(params).catch((e) => diagError("stream", e, { step: "set quality" }));
+  const size = captureSize(p);
+  await track.mediaStreamTrack.applyConstraints({ width: { max: size.width }, height: { max: size.height }, frameRate: { max: size.frameRate } }).catch(() => {});
+  track.mediaStreamTrack.contentHint = contentHint(p);
+  if (sharedCodec && p.codec !== sharedCodec) toast(t("screen.codecNext"));
+  diag("stream", "quality changed", { ...p });
+}
+
+useSettings.subscribe((s, prev) => {
+  if ((s.screenQuality !== prev.screenQuality || s.screenCustom !== prev.screenCustom || s.screenCodec !== prev.screenCodec) && V().screenOn) void applyScreenQuality();
+});
 
 /** The share's audio from the Windows helper goes with the share. */
 async function dropAppAudio() {
@@ -687,30 +719,37 @@ export async function toggleScreen(opts?: { audio?: boolean }) {
     reportSelf();
     return;
   }
-  const preset = SCREEN_PRESETS[settings().screenQuality] ?? SCREEN_PRESETS["1080p30"];
+  const preset = screenPreset();
   const publish: TrackPublishOptions = {
-    videoCodec: "h264",
+    videoCodec: preset.codec,
+    // One layer at full size: no backup copy in another codec (twice the encoding),
+    // and VP9/AV1 without lower spatial layers a small tile could fall back to.
+    backupCodec: false,
+    ...(preset.codec !== "h264" && { scalabilityMode: "L1T3" as const }),
     simulcast: false,
     screenShareEncoding: { maxBitrate: preset.bitrate, maxFramerate: preset.fps, priority: "high" },
-    degradationPreference: preset.fps >= 60 ? "maintain-framerate" : "maintain-resolution",
+    degradationPreference: DEGRADE[preset.mode],
   };
+  diag("stream", "start", { ...preset });
   try {
     if (isAndroid) {
       const { startScreenCapture } = await import("../../lib/android");
       const track = await startScreenCapture(() => {
         if (V().screenOn) void toggleScreen();
       });
-      await room.localParticipant.publishTrack(track, { ...publish, source: Track.Source.ScreenShare, videoCodec: "vp8" });
+      await room.localParticipant.publishTrack(track, { ...publish, source: Track.Source.ScreenShare, videoCodec: "vp8", scalabilityMode: undefined });
+      sharedCodec = null;
     } else {
       const capture: ScreenShareCaptureOptions = {
         audio: opts?.audio ?? true,
         systemAudio: "include",
         selfBrowserSurface: "exclude",
         surfaceSwitching: "include",
-        contentHint: preset.fps >= 60 ? "motion" : "detail",
-        resolution: preset.w ? { width: preset.w, height: preset.h, frameRate: preset.fps } : { width: 3840, height: 2160, frameRate: preset.fps },
+        contentHint: contentHint(preset),
+        resolution: captureSize(preset),
       };
       await room.localParticipant.setScreenShareEnabled(true, capture, publish);
+      sharedCodec = preset.codec;
       // Windows app: the picked screen's or window's audio, captured without
       // Nova itself, arrives from the helper instead of system loopback.
       const extra = appAudioTrack();

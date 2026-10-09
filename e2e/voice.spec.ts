@@ -318,3 +318,32 @@ test("mic check in settings keeps the call from hearing it; hotkeys are rare com
   await expect(muteButton).toHaveCount(0);
   noErrors(a, b);
 });
+
+test("server notifications: every message by default, chosen per server; a call opened in a voice channel is announced", async ({ browser, request }) => {
+  const alice = await register(request, "Алиса");
+  const bob = await register(request, "Боб");
+  const { guild, voice, text } = await guildWith(request, alice, [bob]);
+  const a = await openAs(browser, alice, `/#/channels/${guild.id}/${voice.id}`);
+  const b = await openAs(browser, bob, `/#/channels/${guild.id}/${text.id}`);
+
+  // The server's menu: "Notifications ›" opens in place, every message is the default.
+  const nav = b.page.getByRole("button", { name: `E2E ${alice.displayName}` }).first();
+  await nav.click({ button: "right" });
+  await b.page.getByRole("menuitem", { name: "Уведомления", exact: true }).click();
+  await expect(b.page.getByRole("menuitem", { name: "Все сообщения" })).toHaveAttribute("data-checked", "true");
+  await b.page.getByRole("menuitem", { name: "Только упоминания" }).click();
+  await expect.poll(async () => ((await api<{ targetId: string; level: string }[]>(request, bob, "GET", "/api/users/@me/notification-settings")).find((x) => x.targetId === guild.id)?.level)).toBe("mentions");
+  await nav.click({ button: "right" });
+  await b.page.getByRole("menuitem", { name: "Уведомления", exact: true }).click();
+  await b.page.getByRole("menuitem", { name: "Все сообщения" }).click();
+  await expect.poll(async () => ((await api<{ targetId: string; level: string }[]>(request, bob, "GET", "/api/users/@me/notification-settings")).find((x) => x.targetId === guild.id)?.level)).toBe("all");
+
+  // Alice opens a call: Bob is told, and joins from the toast.
+  await b.page.bringToFront();
+  await a.page.getByRole("button", { name: "Зайти в канал" }).click();
+  const toastJoin = b.page.getByRole("button", { name: "Присоединиться" });
+  await expect(b.page.getByText(/Алиса начал\(а\) звонок/)).toBeVisible({ timeout: 15_000 });
+  await toastJoin.click();
+  await expect(b.page.getByRole("button", { name: "Отключиться" }).first()).toBeVisible({ timeout: 20_000 });
+  noErrors(a, b);
+});

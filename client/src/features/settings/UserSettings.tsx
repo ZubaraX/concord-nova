@@ -20,6 +20,7 @@ import { ColorButton } from "../../components/ui/ColorPicker";
 import { useCustomWallpaper } from "../chat/Wallpaper";
 import { Button, Input, Textarea, Switch, SettingRow, Slider, Segmented, Field, Kbd, useCopy } from "../../components/ui/primitives";
 import { diagText, flushDiag } from "../../lib/diag";
+import { ScreenQualityPicker } from "../voice/ScreenQualityPicker";
 import { UserAvatar } from "../../components/ui/avatar";
 import { Markdown } from "../chat/markdown";
 import { startMicTest } from "../voice/processor";
@@ -770,15 +771,11 @@ function Voice() {
       </Group>
       <Group title={t("settings.screenQuality")}>
         <div className="py-3">
-          <select value={s.screenQuality} onChange={(e) => s.setLocal({ screenQuality: e.target.value as typeof s.screenQuality })} className="h-10 rounded-lg bg-canvas/70 px-3 outline-none ring-1 ring-line/10">
-            <option value="720p30">720p · 30 fps</option>
-            <option value="1080p30">1080p · 30 fps</option>
-            <option value="1080p60">1080p · 60 fps</option>
-            <option value="1440p60">1440p · 60 fps</option>
-            <option value="source">{t("voice.qualitySource")} · 60 fps</option>
-          </select>
-          <p className="mt-1.5 text-[13px] text-fg-3">{t("settings.screenQualityHint")}</p>
+          <ScreenQualityPicker />
         </div>
+        <SettingRow title={t("screen.info")} hint={t("screen.infoHint")}>
+          <Switch checked={s.streamInfo} onChange={(v) => s.setLocal({ streamInfo: v })} />
+        </SettingRow>
       </Group>
       <Group>
         <SettingRow title={t("settings.sounds")} hint={t("settings.soundsHint")}>

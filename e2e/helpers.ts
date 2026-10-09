@@ -1,6 +1,14 @@
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { expect, type APIRequestContext, type Browser, type BrowserContext, type Page } from "@playwright/test";
+import { expect, test, type APIRequestContext, type Browser, type BrowserContext, type Page } from "@playwright/test";
+
+// Every window a test opens closes after it: left open, their calls kept running
+// through the rest of the suite, and the last tests ran beside dozens of them.
+const opened = new Set<BrowserContext>();
+test.afterEach(async () => {
+  await Promise.all([...opened].map((c) => c.close().catch(() => {})));
+  opened.clear();
+});
 
 export const BASE = process.env.E2E_URL ?? "http://localhost:5173";
 export const run = Date.now().toString(36).slice(-6);
@@ -115,6 +123,7 @@ export async function openAs(
   });
   await page.goto(path);
   if (user) await expect(page.locator("[data-shell]")).toBeVisible({ timeout: 20_000 });
+  opened.add(context);
   return { context, page, errors };
 }
 

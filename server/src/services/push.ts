@@ -76,6 +76,52 @@ function preview(m: MessageDTO): string {
   return "";
 }
 
+const callAnnounced = new Map<string, number>();
+
+/**
+ * Someone opened a call in a server voice channel (nobody was there): the
+ * members who'd hear of every message there hear of it — once a minute per
+ * channel at most.
+ */
+export async function pushForVoiceStart(guildId: string, channelId: string, userId: string) {
+  if (Date.now() - (callAnnounced.get(channelId) ?? 0) < 60_000) return;
+  callAnnounced.set(channelId, Date.now());
+  const candidates = cache.viewers(channelId).filter((u) => u !== userId && hasPushStream(u) && !presence.isActiveOnComputer(u));
+  if (!candidates.length) return;
+  const [settings, users, blocks, who, where] = await Promise.all([
+    prisma.notificationSetting.findMany({ where: { userId: { in: candidates }, targetId: { in: [channelId, guildId] } } }),
+    prisma.user.findMany({ where: { id: { in: candidates } }, select: { id: true, status: true } }),
+    prisma.relationship.findMany({ where: { userId: { in: candidates }, targetId: userId, type: RelationshipType.BLOCKED }, select: { userId: true } }),
+    prisma.user.findUnique({ where: { id: userId }, select: { username: true, displayName: true, avatar: true } }),
+    prisma.channel.findUnique({ where: { id: channelId }, select: { name: true, guild: { select: { name: true } } } }),
+  ]);
+  if (!who) return;
+  const blocked = new Set(blocks.map((b) => b.userId));
+  const dnd = new Set(users.filter((u) => u.status === "dnd").map((u) => u.id));
+  const now = Date.now();
+  const name = who.displayName || who.username;
+  for (const uid of candidates) {
+    if (blocked.has(uid) || dnd.has(uid)) continue;
+    const ch = settings.find((s) => s.userId === uid && s.targetId === channelId);
+    const gs = settings.find((s) => s.userId === uid && s.targetId === guildId);
+    const isMuted = (s?: { muted: boolean; muteUntil: Date | null }) => !!s?.muted && (!s.muteUntil || s.muteUntil.getTime() > now);
+    const level = ch && ch.level !== "default" ? ch.level : gs && gs.level !== "default" ? gs.level : "all";
+    if (level !== "all" || isMuted(ch) || isMuted(gs)) continue;
+    pushToUser(uid, {
+      type: "message",
+      title: name,
+      body: `Начал(а) звонок в 🔊 ${where?.name ?? "канале"}`,
+      channelId,
+      guildId,
+      sender: name,
+      authorId: userId,
+      icon: who.avatar,
+      conversation: `🔊 ${where?.name ?? ""} · ${where?.guild?.name ?? ""}`,
+      group: true,
+    });
+  }
+}
+
 /** Decide and send Android pushes for a freshly created message. */
 export async function pushForMessage(m: MessageDTO, recipients: string[], mentioned: Set<string>, everyone: boolean) {
   if (m.flags & (1 << 12)) return; // silent message
@@ -102,7 +148,8 @@ export async function pushForMessage(m: MessageDTO, recipients: string[], mentio
     const ch = settings.find((s) => s.userId === uid && s.targetId === m.channelId);
     const gs = guildId ? settings.find((s) => s.userId === uid && s.targetId === guildId) : undefined;
     const isMuted = (s?: { muted: boolean; muteUntil: Date | null }) => !!s?.muted && (!s.muteUntil || s.muteUntil.getTime() > now);
-    const level = (ch && ch.level !== "default" ? ch.level : gs && gs.level !== "default" ? gs.level : guildId ? "mentions" : "all") as string;
+    // Every message by default, in servers too (until 1.7.5 servers defaulted to mentions only).
+    const level = (ch && ch.level !== "default" ? ch.level : gs && gs.level !== "default" ? gs.level : "all") as string;
     if (level === "none") continue;
     const suppressEveryone = !!gs?.suppressEveryone;
     const isMention = mentioned.has(uid) || (everyone && !suppressEveryone);

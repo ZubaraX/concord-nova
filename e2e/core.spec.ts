@@ -164,3 +164,76 @@ test("settings: theme and language persist across reloads", async ({ browser, re
   await expect(p.getByText("Friends").first()).toBeVisible();
   noErrors(s);
 });
+
+test("a long channel: back to the latest messages lands exactly at the end, and stays there as new ones come", async ({ browser, request }) => {
+  const alice = await register(request, "Алиса");
+  const bob = await register(request, "Боб");
+  const { guild, text } = await guildWith(request, alice, [bob]);
+  // Few but tall (the send limit is a burst of 8): many screens of text.
+  const lines = Array.from({ length: 30 }, (_, k) => `строка ${k + 1}`).join("\n");
+  for (let i = 1; i <= 6; i++) await api(request, alice, "POST", `/api/channels/${text.id}/messages`, { content: `Сообщение ${i}\n${lines}`, nonce: `n${i}-${Date.now()}` });
+  const b = await openAs(browser, bob, `/#/channels/${guild.id}/${text.id}`);
+  const scroller = b.page.locator("[data-virtuoso-scroller]").filter({ hasText: "строка" });
+  const gap = () => scroller.evaluate((el) => Math.round(el.scrollHeight - el.scrollTop - el.clientHeight));
+  const last = b.page.getByText(/^Сообщение 6/);
+  await expect(last).toBeVisible();
+
+  // Up by hand, then the button.
+  await scroller.hover();
+  for (let i = 0; i < 12; i++) await b.page.mouse.wheel(0, -600);
+  await expect(last).toBeHidden();
+  await b.page.getByRole("button", { name: "К последним сообщениям" }).click();
+  await expect(last).toBeVisible();
+  await expect.poll(gap).toBeLessThanOrEqual(2);
+
+  // A new message arrives: still at the very end.
+  await b.page.waitForTimeout(1500); // the send limit
+  await api(request, alice, "POST", `/api/channels/${text.id}/messages`, { content: "Свежее", nonce: `fresh-${Date.now()}` });
+  await expect(b.page.getByText("Свежее", { exact: true })).toBeVisible();
+  await expect.poll(gap).toBeLessThanOrEqual(2);
+  noErrors(b);
+});
+
+test("photo viewer: zooms where you point, 1:1 shows the photo's own pixels, a double click goes back", async ({ browser, request }) => {
+  const { default: sharp } = await import("sharp");
+  const alice = await register(request, "Алиса");
+  const { guild, text } = await guildWith(request, alice, []);
+  const a = await openAs(browser, alice, `/#/channels/${guild.id}/${text.id}`);
+  // A big photo with a gradient, so every spot is different.
+  const w = 2400, h = 1600;
+  const raw = Buffer.alloc(w * h * 3);
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) raw.set([Math.round((x / w) * 255), Math.round((y / h) * 255), 120], (y * w + x) * 3);
+  const jpg = await sharp(raw, { raw: { width: w, height: h, channels: 3 } }).jpeg({ quality: 80 }).toBuffer();
+  const chooser = a.page.waitForEvent("filechooser");
+  await a.page.getByRole("button", { name: "Файлы и другое" }).click();
+  await a.page.getByRole("menuitem", { name: "Прикрепить файл" }).click();
+  await (await chooser).setFiles({ name: "big.jpg", mimeType: "image/jpeg", buffer: jpg });
+  await composer(a.page).press("Enter");
+  await a.page.locator('img[src*="/files/"]').last().click();
+
+  const photo = a.page.locator("[data-lightbox-image]");
+  await expect(photo).toBeVisible();
+  await a.page.waitForTimeout(500); // the opening animation
+  const before = (await photo.boundingBox())!;
+  // A spot off the centre: after zooming in it is still under the cursor. (While the photo is
+  // still narrower than the screen it stays centred, like in any viewer — so not right at the edge.)
+  const fx = 0.45, fy = 0.4;
+  const px = before.x + before.width * fx, py = before.y + before.height * fy;
+  await a.page.mouse.move(px, py);
+  for (let i = 0; i < 5; i++) await a.page.mouse.wheel(0, -120);
+  await expect.poll(async () => Number(await a.page.locator("[data-zoom]").getAttribute("data-zoom"))).toBeGreaterThan(150);
+  await a.page.waitForTimeout(300);
+  const after = (await photo.boundingBox())!;
+  expect(Math.abs((px - after.x) / after.width - fx)).toBeLessThan(0.01);
+  expect(Math.abs((py - after.y) / after.height - fy)).toBeLessThan(0.01);
+
+  // 1:1 — the photo's own pixels.
+  await a.page.locator("[data-zoom] button").nth(1).click();
+  await expect.poll(async () => Math.round((await photo.boundingBox())!.width)).toBe(w);
+  // A double click goes back to fitting the screen; Escape closes.
+  await a.page.mouse.dblclick(px, py);
+  await expect(a.page.locator("[data-zoom]")).toHaveAttribute("data-zoom", "100");
+  await a.page.keyboard.press("Escape");
+  await expect(photo).toBeHidden();
+  noErrors(a);
+});

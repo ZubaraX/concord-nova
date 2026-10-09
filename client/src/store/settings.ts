@@ -36,6 +36,15 @@ export interface SyncedSettings {
   recentEmoji: string[];
 }
 
+/** The "Custom" screen-share quality. height 0 = the screen's own size. */
+export interface ScreenCustom {
+  height: number;
+  fps: number;
+  bitrateKbps: number;
+  codec: "h264" | "vp9" | "av1";
+  mode: "detail" | "balanced" | "motion";
+}
+
 export interface LocalSettings {
   inputDevice: string | null;
   outputDevice: string | null;
@@ -55,7 +64,13 @@ export interface LocalSettings {
   voiceEffect: EffectId;
   echoCancellation: boolean;
   autoGain: boolean;
-  screenQuality: "720p30" | "1080p30" | "1080p60" | "1440p60" | "source";
+  /** A screen-share preset (features/voice/screenQuality) or "custom"; older names are still understood. */
+  screenQuality: string;
+  /** Codec for the presets: "auto" is the preset's own (H.264). */
+  screenCodec: "auto" | "h264" | "vp9" | "av1";
+  screenCustom: ScreenCustom;
+  /** Resolution, frame rate, bitrate and codec shown on streams. */
+  streamInfo: boolean;
   joinMuted: boolean;
   userVolumes: Record<string, number>;
   streamVolumes: Record<string, number>;
@@ -140,7 +155,10 @@ const LOCAL_DEFAULTS: LocalSettings = {
   voiceEffect: "none",
   echoCancellation: true,
   autoGain: true,
-  screenQuality: "1080p30",
+  screenQuality: "standard",
+  screenCodec: "auto",
+  screenCustom: { height: 1080, fps: 60, bitrateKbps: 12_000, codec: "h264", mode: "balanced" },
+  streamInfo: false,
   joinMuted: false,
   userVolumes: {},
   streamVolumes: {},

@@ -46,6 +46,9 @@ test("desktop app chrome: the title bar stays reachable over settings and dialog
   const p = s.page;
   const bar = p.locator(".drag-region");
   await expect(bar).toBeVisible();
+  // Exactly as tall as where the layers start: until 1.7.5 it was 2rem (30 px at the base text size),
+  // and a 2 px strip of the app showed between it and the settings.
+  expect(Math.round((await bar.boundingBox())!.height)).toBe(32);
   await p.getByRole("button", { name: "Настройки" }).last().click();
   await expect(p.getByRole("button", { name: "Свернуть" })).toBeVisible();
   // (after the open animation settles) the layer starts below the 32px title bar

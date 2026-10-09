@@ -1,8 +1,8 @@
 // In-app notification policy: sounds, desktop notifications, taskbar badge.
-// Mirrors the server's push rules (DND, mutes, mention-only by default in
-// guilds) so every device behaves the same.
+// Mirrors the server's push rules (DND, mutes, levels — every message by
+// default, in servers too) so every device behaves the same.
 import { MessageFlags, RelationshipType, isGifLink, type MessageDTO } from "@nova/shared";
-import { bus } from "./bus";
+import { bus, toast } from "./bus";
 import { playSound } from "./sound";
 import { isAndroid, isDesktop } from "./platform";
 import { mediaUrl } from "./server";
@@ -23,12 +23,13 @@ function mentionsMe(s: DataState, m: MessageDTO): boolean {
   return false;
 }
 
-function level(s: DataState, m: MessageDTO): "all" | "mentions" | "none" {
-  const ch = s.notif[m.channelId]?.level;
+/** What reaches me from a channel: its own setting, else its server's, else everything (until 1.7.5 servers defaulted to mentions only). */
+export function notifyLevel(s: DataState, channelId: string, guildId: string | null): "all" | "mentions" | "none" {
+  const ch = s.notif[channelId]?.level;
   if (ch && ch !== "default") return ch;
-  if (!m.guildId) return "all";
-  const g = s.notif[m.guildId]?.level;
-  return g && g !== "default" ? g : "mentions";
+  if (!guildId) return "all";
+  const g = s.notif[guildId]?.level;
+  return g && g !== "default" ? g : "all";
 }
 
 function plain(m: MessageDTO, s: DataState): string {
@@ -60,24 +61,68 @@ function openMessage(m: MessageDTO) {
   navigate(m.guildId ?? "@me", m.channelId);
 }
 
-function showDesktop(m: MessageDTO, title: string, body: string) {
+/** A notification outside the window (desktop app or browser); a click opens `guildId/channelId`. */
+function showDesktop(where: { guildId: string | null; channelId: string }, title: string, body: string, avatar?: string | null, onOpen?: () => void) {
   if (!settings().desktopNotifications) return;
+  const open = onOpen ?? (() => navigate(where.guildId ?? "@me", where.channelId));
   if (isDesktop) {
-    window.nova!.notify(title, body, `${m.guildId ?? "@me"}/${m.channelId}`);
+    window.nova!.notify(title, body, `${where.guildId ?? "@me"}/${where.channelId}`);
     if (settings().flashTaskbar) window.nova!.flashFrame(true);
     return;
   }
   if (isAndroid || typeof Notification === "undefined" || Notification.permission !== "granted") return;
   try {
-    const n = new Notification(title, { body, icon: mediaUrl(m.author.avatar, 96), tag: m.channelId, silent: true });
+    const n = new Notification(title, { body, icon: mediaUrl(avatar, 96), tag: where.channelId, silent: true });
     n.onclick = () => {
       window.focus();
-      openMessage(m);
+      open();
       n.close();
     };
   } catch {
     /* some browsers only allow notifications from a service worker */
   }
+}
+
+const focused = () => document.visibilityState === "visible" && document.hasFocus();
+
+/** An incoming private call while the window is in the background: who calls, and where. */
+export function notifyIncomingCall(channelId: string, callerId: string) {
+  const s = data();
+  if (focused() || s.me?.status === "dnd") return;
+  const channel = s.channels[channelId];
+  const caller = displayName(s, callerId, null);
+  const group = channel?.type === "group_dm";
+  showDesktop({ guildId: null, channelId }, t("call.notifyTitle", { name: caller }), group ? t("call.notifyGroup", { name: channelTitle(s, channel) }) : t("call.notifyBody"), s.users[callerId]?.avatar);
+}
+
+// Someone opened a call in a server's voice channel (it was empty): the members
+// who hear of every message there hear of this too — a sound, and a toast
+// with "Join", or a notification outside the window. Once per channel a minute.
+const inVoice = new Map<string, string>();
+const announced = new Map<string, number>();
+
+function onVoiceState(userId: string, channelId: string | null, guildId: string | null) {
+  const was = inVoice.get(userId);
+  if (channelId) inVoice.set(userId, channelId);
+  else inVoice.delete(userId);
+  if (!channelId || !guildId || was === channelId) return;
+  for (const [u, c] of inVoice) if (u !== userId && c === channelId) return; // someone was already there
+  const s = data();
+  const me = s.me;
+  if (!me || userId === me.id || me.status === "dnd" || inVoice.get(me.id) === channelId) return;
+  if (s.relationships[userId]?.type === RelationshipType.BLOCKED) return;
+  if (notifyLevel(s, channelId, guildId) !== "all" || isMuted(s, channelId, guildId)) return;
+  if (Date.now() - (announced.get(channelId) ?? 0) < 60_000) return;
+  announced.set(channelId, Date.now());
+  const name = displayName(s, userId, guildId);
+  const where = `${s.channels[channelId]?.name ?? ""} · ${s.guilds[guildId]?.name ?? ""}`;
+  const join = () => {
+    navigate(guildId, channelId);
+    void import("../features/voice/voice").then((m) => m.joinVoice(channelId));
+  };
+  playSound("join");
+  if (focused()) toast(t("voice.callStarted", { name, where }), "info", { label: t("voice.joinCall"), run: join });
+  else showDesktop({ guildId, channelId }, name, t("voice.callStarted", { name, where }), s.users[userId]?.avatar);
 }
 
 function onMessage(m: MessageDTO) {
@@ -86,7 +131,7 @@ function onMessage(m: MessageDTO) {
   if (m.flags & MessageFlags.SUPPRESS_NOTIFICATIONS) return;
   if (s.relationships[m.author.id]?.type === RelationshipType.BLOCKED) return;
   if (s.me.status === "dnd") return;
-  const lvl = level(s, m);
+  const lvl = notifyLevel(s, m.channelId, m.guildId);
   if (lvl === "none") return;
   const mention = mentionsMe(s, m);
   const muted = isMuted(s, m.channelId, m.guildId);
@@ -102,7 +147,7 @@ function onMessage(m: MessageDTO) {
   const channel = s.channels[m.channelId];
   const author = displayName(s, m.author.id, m.guildId);
   const title = m.guildId ? `${author} (#${channel?.name ?? ""}, ${s.guilds[m.guildId]?.name ?? ""})` : channel?.type === "group_dm" ? `${author} · ${channelTitle(s, channel)}` : author;
-  showDesktop(m, title, plain(m, s));
+  showDesktop(m, title, plain(m, s), m.author.avatar, () => openMessage(m));
 }
 
 // ── badge + title ────────────────────────────────────────────────────────────
@@ -145,6 +190,11 @@ export function initNotifications() {
   bus.on("dispatch", (e) => {
     if (e.t === "MESSAGE_CREATE") onMessage(e.d);
     if (e.t === "RELATIONSHIP_ADD" && e.d.type === RelationshipType.INCOMING) playSound("friend");
+    if (e.t === "VOICE_STATE_UPDATE") onVoiceState(e.d.userId, e.d.channelId, e.d.guildId ?? null);
+    if (e.t === "READY") {
+      inVoice.clear();
+      for (const v of e.d.voiceStates) if (v.channelId) inVoice.set(v.userId, v.channelId);
+    }
   });
   useData.subscribe((s, prev) => {
     if (s.readStates !== prev.readStates || s.relationships !== prev.relationships || s.notif !== prev.notif || s.ready !== prev.ready) updateBadge();
