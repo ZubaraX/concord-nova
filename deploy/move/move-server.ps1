@@ -40,6 +40,7 @@ function Step([string]$text) { Write-Host ""; Write-Host "■ $text" -Foreground
 
 # ssh with stdin/stdout from/to files: Start-Process hands it the files themselves, byte for byte
 # (a PowerShell 5 pipe would garble the archive); the password prompt stays in this window.
+# (import.sh waits in the admin's home, not in /tmp where another local user could swap it before sudo runs it.)
 # Exit code 255 = the connection itself failed, the remote command never ran: with $tries it's
 # tried again — a home router may drop a quick new connection to a forwarded port.
 function Run([string[]]$target, [string]$remote, [string]$in = "", [string]$out = "", [int]$tries = 1) {
@@ -53,8 +54,12 @@ function Run([string[]]$target, [string]$remote, [string]$in = "", [string]$out 
     Start-Sleep -Seconds (5 * $i)
   }
 }
+# (A few tries: a single request now and then gets lost on the way — a VPN or the router.)
 function Health([string]$domain) {
-  try { (Invoke-RestMethod -Uri "https://$domain/health" -TimeoutSec 15).version } catch { $null }
+  foreach ($i in 1..3) {
+    try { return (Invoke-RestMethod -Uri "https://$domain/health" -TimeoutSec 15).version } catch { Start-Sleep -Seconds 3 }
+  }
+  $null
 }
 
 $oldStopped = $false
@@ -66,7 +71,7 @@ try {
   if (-not $vOld -or -not $vNew) { throw "один из серверов не отвечает по https" }
   if ($vOld -ne $vNew) { throw "версии разные ($vOld и $vNew): сначала обновите сервер с более старой версией" }
   $count = Join-Path $dir "users-$stamp.txt"
-  $rc = Run $toNew "cat > /tmp/nova-import.sh && sudo -n sqlite3 /var/lib/nova/nova.db 'SELECT COUNT(*) FROM User;'" "$here\import.sh" $count 4
+  $rc = Run $toNew "cat > ~/nova-import.sh && chmod 700 ~/nova-import.sh && sudo -n sqlite3 /var/lib/nova/nova.db 'SELECT COUNT(*) FROM User;'" "$here\import.sh" $count 4
   $users = "$(Get-Content $count -ErrorAction SilentlyContinue)".Trim()
   Remove-Item $count -ErrorAction SilentlyContinue
   if ($rc -ne 0) { throw "нет доступа к новому серверу по ключу (или sudo там просит пароль)" }
@@ -83,7 +88,7 @@ try {
   Write-Host ("   скачано {0:N1} МБ → {1}" -f ($size / 1MB), $archive)
 
   Step "3/4 Новый сервер: данные на место"
-  if ((Run $toNew "sudo -n bash /tmp/nova-import.sh" $archive "" 4) -ne 0) { throw "новый сервер не принял данные" }
+  if ((Run $toNew "sudo -n bash ~/nova-import.sh && rm -f ~/nova-import.sh" $archive "" 4) -ne 0) { throw "новый сервер не принял данные" }
 
   Step "4/4 Старый сервер: пересылка на новый — введите пароль root от $oldHost ещё раз"
   if ((Run $toOld "bash -s -- $NewDomain $newHost" "$here\forward.sh") -ne 0) {
