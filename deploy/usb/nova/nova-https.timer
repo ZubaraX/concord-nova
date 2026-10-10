@@ -1,0 +1,9 @@
+[Unit]
+Description=Try for Concord Nova's HTTPS certificate every 20 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=20min
+
+[Install]
+WantedBy=timers.target

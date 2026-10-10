@@ -1,0 +1,17 @@
+# Concord Nova: installs the server on the first start after the USB install.
+[Unit]
+Description=Concord Nova first-boot install
+Wants=network-online.target
+After=network-online.target
+ConditionPathExists=!/opt/nova-usb/.installed
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/nova-usb/firstboot.sh
+StandardOutput=journal+console
+StandardError=journal+console
+TimeoutStartSec=0
+RemainAfterExit=no
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,67 @@
+# The server USB stick (deploy/usb), tested on a fresh Ubuntu 24.04: its answers
+# to the installer are valid, and what a computer installed from it does on its
+# first start — Node.js and LiveKit from the stick, deploy/setup.sh from the
+# sources on it — leaves a running Concord Nova. (The Ubuntu install itself is
+# Canonical's; the stick only answers it.) Builds and deploys nothing.
+name: USB installer
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["deploy/usb/**", "deploy/setup.sh", ".github/workflows/usb-installer.yml"]
+
+jobs:
+  firstboot:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 24 }
+
+      - name: The stick's files
+        run: node deploy/usb/stage.mjs --out /tmp/stick --cache /tmp/usb-cache
+
+      - name: The installer's answers match Ubuntu's autoinstall schema
+        run: |
+          npm i --prefix /tmp/check --no-audit --no-fund --silent ajv@8 js-yaml@4
+          curl -fsSL -o /tmp/check/schema.json https://raw.githubusercontent.com/canonical/subiquity/main/autoinstall-schema.json
+          NODE_PATH=/tmp/check/node_modules node -e '
+            const Ajv = require("ajv"), yaml = require("js-yaml"), fs = require("fs");
+            const ai = yaml.load(fs.readFileSync("/tmp/stick/autoinstall.yaml", "utf8")).autoinstall;
+            const ajv = new Ajv({ strict: false, allErrors: true });
+            if (!ajv.validate(JSON.parse(fs.readFileSync("/tmp/check/schema.json", "utf8")), ai)) { console.error(ajv.errors); process.exit(1); }
+            console.log("autoinstall.yaml: valid");'
+
+      - name: Like a fresh Ubuntu Server (none of the runner's Node.js or web servers)
+        run: |
+          sudo rm -f /usr/local/bin/node /usr/local/bin/npm /usr/local/bin/npx
+          sudo systemctl stop apache2 nginx 2>/dev/null || true
+          sudo apt-get purge -y -qq apache2 nginx nginx-common nginx-core >/dev/null 2>&1 || true
+          ! sudo sh -c 'command -v node'
+
+      - name: What the installer leaves on the disk (autoinstall late-commands)
+        run: |
+          sudo mkdir -p /opt/nova-usb
+          sudo cp -a /tmp/stick/nova/. /opt/nova-usb/
+          sudo install -m 644 /tmp/stick/nova/nova-firstboot.service /etc/systemd/system/nova-firstboot.service
+          sudo systemctl daemon-reload
+          sudo systemctl enable nova-firstboot.service
+
+      - name: First start
+        # A oneshot: `systemctl start` waits until the install is over.
+        run: sudo systemctl start nova-firstboot.service || { sudo tail -n 120 /var/log/nova-install.log; exit 1; }
+
+      - name: A running Concord Nova
+        run: |
+          sudo tail -n 30 /var/log/nova-install.log
+          systemctl is-active nova livekit nginx
+          curl -fsS http://127.0.0.1/health
+          test -f /opt/nova-usb/.installed
+          test "$(readlink -f /usr/bin/node)" = /opt/node/bin/node
+          # No certificate here (nothing reaches port 80 from outside): it keeps trying.
+          systemctl is-enabled nova-https.timer
+          ! systemctl is-enabled -q nova-firstboot.service
+          nova-status
+          grep -F 'http://\4' /etc/issue.d/50-nova.issue

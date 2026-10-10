@@ -1,0 +1,29 @@
+# Concord Nova server — Ubuntu Server 24.04, installed by itself from the USB
+# stick (the installer reads this file from the root of the stick).
+#
+# Asked on screen: "Continue with autoinstall?" (type yes — the computer's
+# largest disk is erased), then the name and password of the server's
+# administrator. Everything else is set here. After the restart the server
+# installs Concord Nova by itself (nova/firstboot.sh) and shows its addresses.
+autoinstall:
+  version: 1
+  interactive-sections:
+    - identity
+  locale: ru_RU.UTF-8
+  keyboard:
+    layout: us
+  timezone: geoip
+  storage:
+    layout:
+      name: direct
+  ssh:
+    install-server: true
+    allow-pw: true
+    # The key of the computer the stick was made on (make-usb.ps1 fills it in).
+    authorized-keys: []
+  late-commands:
+    - mkdir -p /target/opt/nova-usb
+    - cp -a /cdrom/nova/. /target/opt/nova-usb/
+    - install -m 644 /cdrom/nova/nova-firstboot.service /target/etc/systemd/system/nova-firstboot.service
+    - curtin in-target --target=/target -- systemctl enable nova-firstboot.service
+  shutdown: reboot

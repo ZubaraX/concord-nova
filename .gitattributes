@@ -7,3 +7,8 @@ client/android-extras/** text eol=lf
 *.cmd text eol=crlf
 *.wasm binary
 *.bin binary
+# The USB installer: files that land on a Linux server, LF too.
+deploy/usb/nova/** text eol=lf
+deploy/usb/*.yaml text eol=lf
+deploy/usb/*.cfg text eol=lf
+*.ps1 text eol=crlf

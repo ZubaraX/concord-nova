@@ -1,0 +1,9 @@
+# Concord Nova: the HTTPS certificate, once the router forwards the ports.
+[Unit]
+Description=Concord Nova HTTPS certificate (retried until it works)
+Wants=network-online.target
+After=network-online.target nova.service
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /opt/nova-usb/nova-https.sh

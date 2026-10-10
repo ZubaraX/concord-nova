@@ -37,3 +37,4 @@ client/native/bin/
 
 # Public half of the GitHub Actions deploy key (deploy-server.cmd installs it once)
 deploy/ci-deploy.pub
+deploy/usb/.cache/
