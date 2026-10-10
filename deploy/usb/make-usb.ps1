@@ -27,7 +27,7 @@ $ISO_NAME = "ubuntu-24.04.5-live-server-amd64.iso"
 $ISO_URL = "https://releases.ubuntu.com/24.04/$ISO_NAME"
 $ISO_SHA256 = "97f3d7ffb032c3eb3b23d2c8be9cc76e60c2c1f2c0146ba5ba9fe01cafae0fd8"
 
-function Usb-Disks { Get-Disk | Where-Object { $_.BusType -eq "USB" -and -not $_.IsBoot -and -not $_.IsSystem } }
+function Get-UsbDisk { Get-Disk | Where-Object { $_.BusType -eq "USB" -and -not $_.IsBoot -and -not $_.IsSystem } }
 
 # ── вторая половина: диск (запускается с правами администратора) ─────────────
 if ($Write) {
@@ -69,12 +69,17 @@ if ($Write) {
 # ── первая половина: образ ───────────────────────────────────────────────────
 if ($Disk -lt 0) {
   Write-Host "USB-диски:"
-  Usb-Disks | Format-Table Number, FriendlyName, SerialNumber, @{ n = "ГБ"; e = { [math]::Round($_.Size / 1GB) } } | Out-Host
-  Write-Host "Запустите снова с -Disk <номер>. ВСЁ на этом диске будет стёрто."
-  exit 1
+  Get-UsbDisk | Format-Table Number, FriendlyName, SerialNumber, @{ n = "ГБ"; e = { [math]::Round($_.Size / 1GB) } } | Out-Host
+  $answer = Read-Host "Номер диска для флешки Concord Nova (Enter — отмена)"
+  if (-not ($answer -match '^\d+$')) { exit 1 }
+  $Disk = [int]$answer
 }
-$target = Usb-Disks | Where-Object Number -eq $Disk
+$target = Get-UsbDisk | Where-Object Number -eq $Disk
 if (-not $target) { throw "Диск $Disk — не USB-флешка (или системный)" }
+if ([Environment]::UserInteractive -and $Host.Name -eq "ConsoleHost" -and -not $env:NOVA_USB_YES) {
+  $sure = Read-Host "ВСЁ на диске $Disk ($($target.FriendlyName), $([math]::Round($target.Size / 1GB)) ГБ) будет стёрто. Напечатайте ДА"
+  if ($sure -ne "ДА") { Write-Host "Отменено — ничего не стёрто."; exit 1 }
+}
 New-Item -ItemType Directory -Force $cache | Out-Null
 
 $iso = Join-Path $cache $ISO_NAME
