@@ -88,8 +88,12 @@ $image = Join-Path $cache "image"
 Write-Host "Распаковываю Ubuntu…"
 if (Test-Path $image) { Remove-Item -Recurse -Force $image }
 New-Item -ItemType Directory $image | Out-Null
-& "$env:SystemRoot\System32\tar.exe" -xf $iso -C $image
-if ($LASTEXITCODE -ne 0) { throw "Образ Ubuntu не распаковался" }
+# (Три ссылки образа — ubuntu, dists/stable, dists/unstable — на FAT32 не нужны и не ложатся:
+# tar сообщит о них ошибкой; проверяем сами файлы загрузки.)
+& "$env:SystemRoot\System32\tar.exe" -xf $iso -C $image 2>$null
+foreach ($f in @(".disk\info", "EFI\boot\bootx64.efi", "boot\grub\grub.cfg", "casper\vmlinuz", "casper\initrd")) {
+  if (-not (Test-Path (Join-Path $image $f))) { throw "Образ Ubuntu не распаковался ($f)" }
+}
 attrib -R "$image\*" /S /D | Out-Null
 
 Write-Host "Файлы Concord Nova…"

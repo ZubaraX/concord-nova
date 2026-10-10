@@ -462,7 +462,8 @@ say "LiveKit"
 # Restarting LiveKit ends every call in progress, so it only happens when its
 # binary, config, unit or TURN certificate actually changed (an app update
 # leaves calls alone; the voice server just keeps running).
-lk_state() { cat "$(command -v livekit-server)" /etc/livekit/livekit.yaml /etc/systemd/system/livekit.service /etc/livekit/turn.crt 2>/dev/null | sha256sum | cut -d' ' -f1; }
+# (A fresh server has none of these files yet: cat's complaint must not end the script under pipefail.)
+lk_state() { { cat "$(command -v livekit-server)" /etc/livekit/livekit.yaml /etc/systemd/system/livekit.service /etc/livekit/turn.crt 2>/dev/null || true; } | sha256sum | cut -d' ' -f1; }
 LK_BEFORE=$(lk_state)
 TURN_TLS=""
 if [ -d "/etc/letsencrypt/live/$DOMAIN" ]; then
