@@ -16,8 +16,10 @@ jobs:
   windows:
     runs-on: windows-latest
     env:
-      VITE_API_URL: ${{ vars.NOVA_SERVER_URL || 'https://138-16-224-172.sslip.io' }}
-      VITE_API_URL_FALLBACK: ${{ vars.NOVA_SERVER_FALLBACK || 'http://138.16.224.172' }}
+      # The desktop app may talk to another address than the Android one (NOVA_DESKTOP_* — e.g. the
+      # server itself, while Android keeps an older address that forwards to it).
+      VITE_API_URL: ${{ vars.NOVA_DESKTOP_SERVER_URL || vars.NOVA_SERVER_URL || 'https://138-16-224-172.sslip.io' }}
+      VITE_API_URL_FALLBACK: ${{ vars.NOVA_DESKTOP_SERVER_FALLBACK || vars.NOVA_SERVER_FALLBACK || 'http://138.16.224.172' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

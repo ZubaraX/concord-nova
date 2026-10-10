@@ -18,6 +18,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      # SSH port of the server (a home server's router may forward another one to 22).
+      DEPLOY_PORT: ${{ vars.DEPLOY_PORT || '22' }}
     steps:
       - name: Check configuration
         if: env.DEPLOY_HOST == ''
@@ -34,7 +36,7 @@ jobs:
         run: |
           install -d -m 700 ~/.ssh
           printf '%s\n' "$KEY" > ~/.ssh/id_ed25519 && chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
+          ssh-keyscan -p "$DEPLOY_PORT" -H "$DEPLOY_HOST" >> ~/.ssh/known_hosts 2>/dev/null
       - name: Deploy
         if: env.DEPLOY_HOST != ''
-        run: node deploy/push.mjs "root@$DEPLOY_HOST"
+        run: node deploy/push.mjs "root@$DEPLOY_HOST" --port "$DEPLOY_PORT"
