@@ -6,13 +6,20 @@ set -uo pipefail
 
 LAN=$(ip -4 route get 1.1.1.1 2>/dev/null | awk '{for (i = 1; i < NF; i++) if ($i == "src") print $(i + 1)}')
 LAN=${LAN:-$(hostname -I 2>/dev/null | awk '{print $1}')}
-PUBLIC=""
-[ -r /etc/nova/nova.env ] && PUBLIC=$(sed -n 's/^PUBLIC_URL=//p' /etc/nova/nova.env)
-DOMAIN=${PUBLIC#https://}
+DOMAIN="" HTTPS=no
+# Only root reads the settings and the certificates; others see what root's last look saw.
+SEEN=/opt/nova-usb/status.env
+if [ "$(id -u)" = 0 ]; then
+  [ -r /etc/nova/nova.env ] && DOMAIN=$(sed -n 's|^PUBLIC_URL=https://||p' /etc/nova/nova.env)
+  [ -n "$DOMAIN" ] && [ -d "/etc/letsencrypt/live/$DOMAIN" ] && HTTPS=yes
+  [ -d /opt/nova-usb ] && printf 'DOMAIN=%s\nHTTPS=%s\n' "$DOMAIN" "$HTTPS" >"$SEEN"
+elif [ -r "$SEEN" ]; then
+  . "$SEEN"
+fi
 
 if [ -f /opt/nova-usb/.installed ] && systemctl is-active -q nova; then
   STATE="работает"
-  if [ -n "$DOMAIN" ] && [ -d "/etc/letsencrypt/live/$DOMAIN" ]; then
+  if [ "$HTTPS" = yes ]; then
     NET="https://$DOMAIN"
   else
     NET="https://$DOMAIN — заработает, когда роутер пробросит порты (проверка каждые 20 минут)"

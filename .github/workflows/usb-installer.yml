@@ -63,5 +63,6 @@ jobs:
           # No certificate here (nothing reaches port 80 from outside): it keeps trying.
           systemctl is-enabled nova-https.timer
           ! systemctl is-enabled -q nova-firstboot.service
-          nova-status
+          nova-status | tee /tmp/status.txt
+          grep -q "https://[0-9-]*.sslip.io" /tmp/status.txt
           grep -F 'http://\4' /etc/issue.d/50-nova.issue
