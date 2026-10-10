@@ -119,4 +119,6 @@ Start-Process powershell.exe -Verb RunAs -Wait -ArgumentList @(
 )
 $result = Get-Content (Join-Path $cache "write-usb.result") -ErrorAction SilentlyContinue
 Write-Host $result
+# (robocopy's own codes 1-7 mean success: don't let one be the script's result.)
 if ($result -notlike "OK*") { exit 1 }
+exit 0
